@@ -51,16 +51,16 @@ parser.add_argument("--dropout_rate", type=float,
                     default=0.2)
 parser.add_argument('--gamma', type=float, default=0.9, metavar='G',
                     help='discount factor (default: 0.99)')
-parser.add_argument("--order_learning", type=str2bool, nargs='?', default='n', const=True,
-                    help="Activate order learning mode.")
-parser.add_argument("--use_local_only", type=str2bool, nargs='?', default='n', const=True,
-                    help="Activate local_only mode.")
+# parser.add_argument("--order_learning", type=str2bool, nargs='?', default='n', const=True,
+#                     help="Activate order learning mode.")
+# parser.add_argument("--use_local_only", type=str2bool, nargs='?', default='n', const=True,
+#                     help="Activate local_only mode.")
 
 # if use topic, the ment2ment matrix will be replaced by the ent2ent matrix, and the 'learning order' method will be called
 # if use local, directly give the order by local similarity
-parser.add_argument("--sort", type=str,
-                    help="heuristic order, local similarity or topic similarity",
-                    default='topic')
+# parser.add_argument("--sort", type=str,
+#                     help="heuristic order, local similarity or topic similarity",
+#                     default='topic')
 
 # args for preranking (i.e. 2-step candidate selection)
 # for every mention, pick n_cands candidate entities before ranking
@@ -86,22 +86,22 @@ parser.add_argument("--ctx_window", type=int,
 parser.add_argument("--tok_top_n", type=int,
                     help="number of top contextual words for the local model",
                     default=50)
-# only choose n mentions for order learning for 'topic' sort
-parser.add_argument("--tok_top_n4ment", type=int,
-                    help="number of top previous disambiguated mentions for the whole model",
-                    default=7)
-# only choose n pre-linked entities for computing phi(e,St)
-parser.add_argument("--tok_top_n4ent", type=int,
-                    help="number of top knowledge entities for the whole model",
-                    default=7)
-# only choose n near entites of prelinked entities for computing phi(e,St')
-parser.add_argument("--tok_top_n4word", type=int,
-                    help="number of top knowledge words for the whole model",
-                    default=50)
-# only sample n near entities for every entities
-parser.add_argument("--tok_top_n4inlink", type=int,
-                    help="number of top inlinked entities for the whole model",
-                    default=100)
+# # only choose n mentions for order learning for 'topic' sort
+# parser.add_argument("--tok_top_n4ment", type=int,
+#                     help="number of top previous disambiguated mentions for the whole model",
+#                     default=7)
+# # only choose n pre-linked entities for computing phi(e,St)
+# parser.add_argument("--tok_top_n4ent", type=int,
+#                     help="number of top knowledge entities for the whole model",
+#                     default=7)
+# # only choose n near entites of prelinked entities for computing phi(e,St')
+# parser.add_argument("--tok_top_n4word", type=int,
+#                     help="number of top knowledge words for the whole model",
+#                     default=50)
+# # only sample n near entities for every entities
+# parser.add_argument("--tok_top_n4inlink", type=int,
+#                     help="number of top inlinked entities for the whole model",
+#                     default=100)
 
 # args for global model
 parser.add_argument("--hid_dims", type=int,
@@ -134,11 +134,11 @@ parser.add_argument("--margin", type=float,
 parser.add_argument('--seq_len', type=int, default=0,
                     help='sequence length during training')
 
-parser.add_argument('--dca_method', type=int, default=0,
-                    help='dca select method, 0: attention topk, 1: attention all, 2: average')
+# parser.add_argument('--dca_method', type=int, default=0,
+#                     help='dca select method, 0: attention topk, 1: attention all, 2: average')
 
-parser.add_argument('--isDynamic', type=int, default=0,
-                    help='0: coherence+DCA, 1: coherence, 2: local model')
+# parser.add_argument('--isDynamic', type=int, default=0,
+#                     help='0: coherence+DCA, 1: coherence, 2: local model')
 
 parser.add_argument('--one_entity_once', type=int, default=0,
                     help='')
@@ -167,10 +167,11 @@ timestr = time.strftime("%Y%m%d-%H%M%S")
 
 #F1_CSV_Path = args.output_path + args.method + "_" + args.order + "_" + "f1.csv"
 
-F1_CSV_Path = args.output_path + args.method + "_" + args.order + "_" + str(args.tok_top_n) + "-" \
-              + str(args.tok_top_n4ent) + "-" + str(args.tok_top_n4word) + "-" + str(args.tok_top_n4inlink) + "_" \
-              + timestr + "_" + str(args.order_learning) + "_" + args.sort + "_" + str(args.seq_len) + str(args.isDynamic) + str(args.dca_method) + str(args.one_entity_once) + "f1.csv"
+# F1_CSV_Path = args.output_path + args.method + "_" + args.order + "_" + str(args.tok_top_n) + "-" \
+#               + str(args.tok_top_n4ent) + "-" + str(args.tok_top_n4word) + "-" + str(args.tok_top_n4inlink) + "_" \
+#               + timestr + "_" + str(args.order_learning) + "_" + args.sort + "_" + str(args.seq_len) + str(args.isDynamic) + str(args.dca_method) + str(args.one_entity_once) + "f1.csv"
 
+F1_CSV_Path = args.output_path + args.method + "_" + timestr + "_" + "f1.csv"
 
 if __name__ == "__main__":
     print('load conll at', datadir)
@@ -190,10 +191,10 @@ if __name__ == "__main__":
               'emb_dims': entity_embeddings.shape[1],
               'freeze_embs': True,
               'tok_top_n': args.tok_top_n,
-              'tok_top_n4ment': args.tok_top_n4ment,
-              'tok_top_n4ent': args.tok_top_n4ent,
-              'tok_top_n4word': args.tok_top_n4word,
-              'tok_top_n4inlink': args.tok_top_n4inlink,
+              # 'tok_top_n4ment': args.tok_top_n4ment,
+              # 'tok_top_n4ent': args.tok_top_n4ent,
+              # 'tok_top_n4word': args.tok_top_n4word,
+              # 'tok_top_n4inlink': args.tok_top_n4inlink,
               'margin': args.margin,
               'word_voca': word_voca,
               'entity_voca': entity_voca,
@@ -202,11 +203,11 @@ if __name__ == "__main__":
               'entity_inlinks': ent_inlinks_dict,
               'dr': args.dropout_rate,
               'gamma': args.gamma,
-              'order_learning': args.order_learning,
-              'dca_method' : args.dca_method,
+              # 'order_learning': args.order_learning,
+              # 'dca_method' : args.dca_method,
               'f1_csv_path': F1_CSV_Path,
               'seq_len': args.seq_len,
-              'isDynamic' : args.isDynamic,
+              # 'isDynamic' : args.isDynamic,
               'one_entity_once': args.one_entity_once,
               'args': args}
 

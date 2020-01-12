@@ -54,7 +54,7 @@ class EDRanker:
             print('create new model')
 
             config['use_local'] = True
-            config['use_local_only'] = self.args.use_local_only
+            # config['use_local_only'] = self.args.use_local_only
             config['oracle'] = False
             self.model = ModelClass(config)
 
@@ -269,19 +269,6 @@ class EDRanker:
                     if sm['true_pos'] == -1:
                         continue
 
-                        # this insertion only makes the performance worse (why???)
-                        # sm['true_pos'] = 0
-                        # sm['cands'][0] = m['cands'][m['true_pos']]
-                        # sm['named_cands'][0] = m['named_cands'][m['true_pos']]
-                        # sm['p_e_m'][0] = m['p_e_m'][m['true_pos']]
-                        # sm['mask'][0] = m['mask'][m['true_pos']]
-                        # if m['true_pos'] != -1:
-                        #     sm['true_pos'] = len(selected) - 1
-                        #     sm['cands'][-1] = m['cands'][m['true_pos']]
-                        #     sm['named_cands'][-1] = m['named_cands'][m['true_pos']]
-                        #     sm['p_e_m'][-1] = m['p_e_m'][m['true_pos']]
-                        #     sm['mask'][-1] = m['mask'][m['true_pos']]
-
                 items.append(m)
                 if sm['true_pos'] >= 0:
                     has_gold += 1
@@ -298,431 +285,6 @@ class EDRanker:
 
         print('recall', has_gold / total)
         return new_dataset
-
-    # Automatic Order Learning Method - original version
-    # def train(self, org_train_dataset, org_dev_datasets, config):
-    #     print('extracting training data')
-    #     train_dataset = self.get_data_items(org_train_dataset, predict=False)
-    #     print('#train docs', len(train_dataset))
-    #
-    #     dev_datasets = []
-    #     for dname, data in org_dev_datasets:
-    #         dev_datasets.append((dname, self.get_data_items(data, predict=True)))
-    #         print(dname, '#dev docs', len(dev_datasets[-1][1]))
-    #
-    #     print('creating optimizer')
-    #     optimizer = optim.Adam([p for p in self.model.parameters() if p.requires_grad], lr=config['lr'])
-    #
-    #     for param_name, param in self.model.named_parameters():
-    #         if param.requires_grad:
-    #             print(param_name)
-    #
-    #     best_f1 = -1
-    #     not_better_count = 0
-    #     is_counting = False
-    #     order_learning = False
-    #     eval_after_n_epochs = self.args.eval_after_n_epochs
-    #
-    #     rl_acc_threshold = 0.5
-    #     order_learning_count = 0
-    #
-    #     # optimize the parameters within the disambiguation module first
-    #     self.model.switch_order_learning(0)
-    #
-    #     for e in range(config['n_epochs']):
-    #         if self.args.method == "SL" or self.args.method == "RL":
-    #             shuffle(train_dataset)
-    #
-    #         total_loss = 0
-    #
-    #         if order_learning:
-    #             order_learning_count += 1
-    #
-    #         if order_learning_count > 5:
-    #             self.model.switch_order_learning(1)
-    #
-    #         for dc, batch in enumerate(train_dataset):  # each document is a minibatch
-    #             self.model.train()
-    #
-    #             # convert data items to pytorch inputs
-    #             token_ids = [m['context'][0] + m['context'][1]
-    #                          if len(m['context'][0]) + len(m['context'][1]) > 0
-    #                          else [self.model.word_voca.unk_id]
-    #                          for m in batch]
-    #
-    #             ment_ids = [m['ment_ids'] if len(m['ment_ids']) > 0
-    #                         else [self.model.word_voca.unk_id]
-    #                         for m in batch]
-    #
-    #             entity_ids = Variable(torch.LongTensor([m['selected_cands']['cands'] for m in batch]).cuda())
-    #             true_pos = Variable(torch.LongTensor([m['selected_cands']['true_pos'] for m in batch]).cuda())
-    #             p_e_m = Variable(torch.FloatTensor([m['selected_cands']['p_e_m'] for m in batch]).cuda())
-    #             entity_mask = Variable(torch.FloatTensor([m['selected_cands']['mask'] for m in batch]).cuda())
-    #
-    #             mtype = Variable(torch.FloatTensor([m['mtype'] for m in batch]).cuda())
-    #             etype = Variable(torch.FloatTensor([m['selected_cands']['etype'] for m in batch]).cuda())
-    #
-    #             token_ids, token_mask = utils.make_equal_len(token_ids, self.model.word_voca.unk_id)
-    #             token_ids = Variable(torch.LongTensor(token_ids).cuda())
-    #             token_mask = Variable(torch.FloatTensor(token_mask).cuda())
-    #
-    #             ment_ids, ment_mask = utils.make_equal_len(ment_ids, self.model.word_voca.unk_id)
-    #             ment_ids = Variable(torch.LongTensor(ment_ids).cuda())
-    #             ment_mask = Variable(torch.FloatTensor(ment_mask).cuda())
-    #
-    #             if self.args.method == "SL":
-    #                 optimizer.zero_grad()
-    #
-    #                 # get the model output
-    #                 if order_learning_count > 5 and len(batch) > 1:
-    #                     scores, _ = self.model.forward(token_ids, token_mask, entity_ids, entity_mask, p_e_m, mtype,
-    #                                                    etype,
-    #                                                    ment_ids, ment_mask, gold=true_pos.view(-1, 1),
-    #                                                    method=self.args.method,
-    #                                                    isTrain=False, isDynamic=0, isOrderLearning=order_learning,
-    #                                                    isOrderFixed=False)
-    #
-    #                     loss = self.model.order_loss()
-    #
-    #                 else:
-    #                     scores, _ = self.model.forward(token_ids, token_mask, entity_ids, entity_mask, p_e_m, mtype, etype,
-    #                                                    ment_ids, ment_mask, gold=true_pos.view(-1, 1), method=self.args.method,
-    #                                                    isTrain=True, isDynamic=0, isOrderLearning=order_learning,
-    #                                                    isOrderFixed=True)
-    #                     if order_learning:
-    #                         _, targets = self.model.get_order_truth()
-    #                         targets = Variable(torch.LongTensor(targets).cuda())
-    #
-    #                         if scores.size(0) != targets.size(0):
-    #                             print("Size mismatch!")
-    #                             break
-    #                         loss = self.model.loss(scores, targets, method=self.args.method)
-    #                     else:
-    #                         loss = self.model.loss(scores, true_pos, method=self.args.method)
-    #
-    #                 loss.backward()
-    #                 optimizer.step()
-    #                 self.model.regularize(max_norm=4)
-    #
-    #                 loss = loss.cpu().data.numpy()
-    #                 total_loss += loss
-    #
-    #             elif self.args.method == "RL":
-    #                 action_memory = []
-    #                 early_stop_count = 0
-    #
-    #                 for i_episode in count(1):  # the actual episode number for one doc is determined by decision accuracy
-    #                     optimizer.zero_grad()
-    #
-    #                     # get the model output
-    #                     if order_learning_count > 5 and len(batch) > 1:
-    #                         scores, actions = self.model.forward(token_ids, token_mask, entity_ids, entity_mask, p_e_m,
-    #                                                              mtype, etype,
-    #                                                              ment_ids, ment_mask, gold=true_pos.view(-1, 1),
-    #                                                              method=self.args.method,
-    #                                                              isTrain=True, isDynamic=0,
-    #                                                              isOrderLearning=order_learning,
-    #                                                              isOrderFixed=False)
-    #
-    #                         loss = self.model.order_loss()
-    #
-    #                     else:
-    #                         scores, actions = self.model.forward(token_ids, token_mask, entity_ids, entity_mask, p_e_m,
-    #                                                              mtype, etype,
-    #                                                              ment_ids, ment_mask, gold=true_pos.view(-1, 1),
-    #                                                              method=self.args.method,
-    #                                                              isTrain=True, isDynamic=0,
-    #                                                              isOrderLearning=order_learning,
-    #                                                              isOrderFixed=True)
-    #                         if order_learning:
-    #                             _, targets = self.model.get_order_truth()
-    #                             targets = Variable(torch.LongTensor(targets).cuda())
-    #
-    #                             if scores.size(0) != targets.size(0):
-    #                                 print("Size mismatch!")
-    #                                 break
-    #
-    #                             loss = self.model.loss(scores, targets, method=self.args.method)
-    #                         else:
-    #                             loss = self.model.loss(scores, true_pos, method=self.args.method)
-    #
-    #                     loss.backward()
-    #                     optimizer.step()
-    #                     self.model.regularize(max_norm=4)
-    #
-    #                     loss = loss.cpu().data.numpy()
-    #                     total_loss += loss
-    #
-    #                     # compute accuracy
-    #                     correct = 0
-    #                     total = 0.
-    #                     if order_learning:
-    #                         _, targets = self.model.get_order_truth()
-    #                         for i in range(len(actions)):
-    #                             if targets[i] == actions[i]:
-    #                                 correct += 1
-    #                             total += 1
-    #                     else:
-    #                         for i in range(len(actions)):
-    #                             if true_pos.data[i] == actions[i]:
-    #                                 correct += 1
-    #                             total += 1
-    #
-    #                     if i_episode > len(batch):
-    #                         break
-    #
-    #                     if actions == action_memory:
-    #                         early_stop_count += 1
-    #                     else:
-    #                         del action_memory[:]
-    #                         action_memory = copy.deepcopy(actions)
-    #                         early_stop_count = 0
-    #
-    #                     if correct/total >= rl_acc_threshold or early_stop_count >= 5:
-    #                         break
-    #
-    #             # print('epoch', e, "%0.2f%%" % (dc / len(train_dataset) * 100), loss)
-    #
-    #         if order_learning_count == 10:
-    #             # Reset to the initial state
-    #             order_learning_count = 0
-    #             self.model.switch_order_learning(0)
-    #
-    #         print('epoch', e, 'total loss', total_loss, total_loss / len(train_dataset), flush=True)
-    #
-    #         if (e + 1) % eval_after_n_epochs == 0:
-    #             dev_f1 = 0
-    #
-    #             if rl_acc_threshold < 0.95:
-    #                 rl_acc_threshold += 0.05
-    #
-    #             for di, (dname, data) in enumerate(dev_datasets):
-    #                 predictions = self.predict(data, 0, order_learning)
-    #                 f1 = D.eval(org_dev_datasets[di][1], predictions)
-    #
-    #                 # predictions_1 = self.predict(data, 1, order_learning)
-    #                 # f1_1 = D.eval(org_dev_datasets[di][1], predictions_1)
-    #                 #
-    #                 # predictions_2 = self.predict(data, 2, order_learning)
-    #                 # f1_2 = D.eval(org_dev_datasets[di][1], predictions_2)
-    #
-    #                 print(dname, utils.tokgreen('micro F1: ' + str(f1)), flush=True)
-    #
-    #                 with open(self.output_path, 'a') as eval_csv_f1:
-    #                     eval_f1_csv_writer = csv.writer(eval_csv_f1)
-    #                     eval_f1_csv_writer.writerow([dname, e, 0, f1])
-    #                     # eval_f1_csv_writer.writerow([dname, e, 1, f1_1])
-    #                     # eval_f1_csv_writer.writerow([dname, e, 2, f1_2])
-    #
-    #                 if dname == 'aida-A':
-    #                     dev_f1 = f1
-    #
-    #             if config['lr'] == 2e-4 and dev_f1 >= self.args.dev_f1_change_lr:
-    #                 eval_after_n_epochs = 2
-    #                 is_counting = True
-    #                 best_f1 = dev_f1
-    #                 not_better_count = 0
-    #
-    #                 self.model.switch_order_learning(0)
-    #                 config['lr'] = 5e-5
-    #                 print('change learning rate to', config['lr'])
-    #                 optimizer = optim.Adam([p for p in self.model.parameters() if p.requires_grad], lr=config['lr'])
-    #
-    #                 for param_name, param in self.model.named_parameters():
-    #                     if param.requires_grad:
-    #                         print(param_name)
-    #
-    #             if dev_f1 >= 0.92 and self.args.order_learning:
-    #                 order_learning = True
-    #
-    #             if is_counting:
-    #                 if dev_f1 < best_f1:
-    #                     not_better_count += 1
-    #                 else:
-    #                     not_better_count = 0
-    #                     best_f1 = dev_f1
-    #                     print('save model to', self.args.model_path)
-    #                     self.model.save(self.args.model_path)
-    #
-    #             if not_better_count == self.args.n_not_inc:
-    #                 break
-    #
-    #             self.model.print_weight_norm()
-
-    # Automatic Order Learning Method - final version
-    # def train(self, org_train_dataset, org_dev_datasets, config):
-    #     print('extracting training data')
-    #     train_dataset = self.get_data_items(org_train_dataset, predict=False)
-    #     print('#train docs', len(train_dataset))
-    #
-    #     dev_datasets = []
-    #     for dname, data in org_dev_datasets:
-    #         dev_datasets.append((dname, self.get_data_items(data, predict=True)))
-    #         print(dname, '#dev docs', len(dev_datasets[-1][1]))
-    #
-    #     print('creating optimizer')
-    #     optimizer = optim.Adam([p for p in self.model.parameters() if p.requires_grad], lr=config['lr'])
-    #
-    #     for param_name, param in self.model.named_parameters():
-    #         if param.requires_grad:
-    #             print(param_name)
-    #
-    #     best_f1 = -1
-    #     not_better_count = 0
-    #     is_counting = False
-    #     eval_after_n_epochs = self.args.eval_after_n_epochs
-    #
-    #     order_learning = False
-    #     order_learning_count = 0
-    #
-    #     # optimize the parameters within the disambiguation module first
-    #     self.model.switch_order_learning(0)
-    #
-    #     for e in range(config['n_epochs']):
-    #         shuffle(train_dataset)
-    #
-    #         total_loss = 0
-    #
-    #         if order_learning:
-    #             order_learning_count += 1
-    #
-    #         if order_learning_count > 5:
-    #             self.model.switch_order_learning(1)
-    #
-    #         for dc, batch in enumerate(train_dataset):  # each document is a minibatch
-    #             self.model.train()
-    #
-    #             # convert data items to pytorch inputs
-    #             token_ids = [m['context'][0] + m['context'][1]
-    #                          if len(m['context'][0]) + len(m['context'][1]) > 0
-    #                          else [self.model.word_voca.unk_id]
-    #                          for m in batch]
-    #
-    #             ment_ids = [m['ment_ids'] if len(m['ment_ids']) > 0
-    #                         else [self.model.word_voca.unk_id]
-    #                         for m in batch]
-    #
-    #             entity_ids = Variable(torch.LongTensor([m['selected_cands']['cands'] for m in batch]).cuda())
-    #             true_pos = Variable(torch.LongTensor([m['selected_cands']['true_pos'] for m in batch]).cuda())
-    #             p_e_m = Variable(torch.FloatTensor([m['selected_cands']['p_e_m'] for m in batch]).cuda())
-    #             entity_mask = Variable(torch.FloatTensor([m['selected_cands']['mask'] for m in batch]).cuda())
-    #
-    #             mtype = Variable(torch.FloatTensor([m['mtype'] for m in batch]).cuda())
-    #             etype = Variable(torch.FloatTensor([m['selected_cands']['etype'] for m in batch]).cuda())
-    #
-    #             token_ids, token_mask = utils.make_equal_len(token_ids, self.model.word_voca.unk_id)
-    #             token_ids = Variable(torch.LongTensor(token_ids).cuda())
-    #             token_mask = Variable(torch.FloatTensor(token_mask).cuda())
-    #
-    #             ment_ids, ment_mask = utils.make_equal_len(ment_ids, self.model.word_voca.unk_id)
-    #             ment_ids = Variable(torch.LongTensor(ment_ids).cuda())
-    #             ment_mask = Variable(torch.FloatTensor(ment_mask).cuda())
-    #
-    #             optimizer.zero_grad()
-    #
-    #             # get the model output
-    #             # alternate training for parameters within the order learning module and
-    #             # parameters within the disambiguation module
-    #             if order_learning_count > 5 and len(batch) > 1:
-    #                 # when starting optimizing the parameters within the order learning module, we have to
-    #                 # set isTrain=False to get the rewards from validation, for that SL always give the ground
-    #                 # truth answer so that we can't identify whether the present parameters are good or not
-    #                 scores, _ = self.model.forward(token_ids, token_mask, entity_ids, entity_mask, p_e_m, mtype,
-    #                                                etype, ment_ids, ment_mask, gold=true_pos.view(-1, 1),
-    #                                                method=self.args.method,
-    #                                                isTrain=False, isDynamic=0, isOrderLearning=order_learning,
-    #                                                isOrderFixed=False)
-    #
-    #                 loss = self.model.order_loss()
-    #
-    #             else:
-    #                 scores, _ = self.model.forward(token_ids, token_mask, entity_ids, entity_mask, p_e_m, mtype, etype,
-    #                                                ment_ids, ment_mask, gold=true_pos.view(-1, 1),
-    #                                                method=self.args.method,
-    #                                                isTrain=True, isDynamic=0, isOrderLearning=order_learning,
-    #                                                isOrderFixed=False)
-    #                 if order_learning:
-    #                     _, targets = self.model.get_order_truth()
-    #                     targets = Variable(torch.LongTensor(targets).cuda())
-    #
-    #                     if scores.size(0) != targets.size(0):
-    #                         print("Size mismatch!")
-    #                         break
-    #                     loss = self.model.loss(scores, targets, method=self.args.method)
-    #                 else:
-    #                     loss = self.model.loss(scores, true_pos, method=self.args.method)
-    #
-    #             loss.backward()
-    #             optimizer.step()
-    #             self.model.regularize(max_norm=4)
-    #
-    #             loss = loss.cpu().data.numpy()
-    #             total_loss += loss
-    #
-    #             # print('epoch', e, "%0.2f%%" % (dc / len(train_dataset) * 100), loss)
-    #
-    #         if order_learning_count == 10:
-    #             # Reset to the initial state
-    #             order_learning_count = 0
-    #             self.model.switch_order_learning(0)
-    #
-    #         print('epoch', e, 'total loss', total_loss, total_loss / len(train_dataset), flush=True)
-    #
-    #         if (e + 1) % eval_after_n_epochs == 0:
-    #             dev_f1 = 0
-    #
-    #             for di, (dname, data) in enumerate(dev_datasets):
-    #                 predictions = self.predict(data, 0, order_learning)
-    #                 f1 = D.eval(org_dev_datasets[di][1], predictions)
-    #
-    #                 # predictions_1 = self.predict(data, 1, order_learning)
-    #                 # f1_1 = D.eval(org_dev_datasets[di][1], predictions_1)
-    #                 #
-    #                 # predictions_2 = self.predict(data, 2, order_learning)
-    #                 # f1_2 = D.eval(org_dev_datasets[di][1], predictions_2)
-    #
-    #                 print(dname, utils.tokgreen('micro F1: ' + str(f1)), flush=True)
-    #
-    #                 with open(self.output_path, 'a') as eval_csv_f1:
-    #                     eval_f1_csv_writer = csv.writer(eval_csv_f1)
-    #                     eval_f1_csv_writer.writerow([dname, e, 0, f1])
-    #                     # eval_f1_csv_writer.writerow([dname, e, 1, f1_1])
-    #                     # eval_f1_csv_writer.writerow([dname, e, 2, f1_2])
-    #
-    #                 if dname == 'aida-A':
-    #                     dev_f1 = f1
-    #
-    #             if config['lr'] == 2e-4 and dev_f1 >= self.args.dev_f1_change_lr:
-    #                 eval_after_n_epochs = 2
-    #                 is_counting = True
-    #                 best_f1 = dev_f1
-    #                 not_better_count = 0
-    #
-    #                 self.model.switch_order_learning(0)
-    #                 config['lr'] = 5e-5
-    #                 print('change learning rate to', config['lr'])
-    #                 optimizer = optim.Adam([p for p in self.model.parameters() if p.requires_grad], lr=config['lr'])
-    #
-    #                 for param_name, param in self.model.named_parameters():
-    #                     if param.requires_grad:
-    #                         print(param_name)
-    #
-    #             if dev_f1 >= self.args.dev_f1_start_order_learning and self.args.order_learning:
-    #                 order_learning = True
-    #
-    #             if is_counting:
-    #                 if dev_f1 < best_f1:
-    #                     not_better_count += 1
-    #                 else:
-    #                     not_better_count = 0
-    #                     best_f1 = dev_f1
-    #                     print('save model to', self.args.model_path)
-    #                     self.model.save(self.args.model_path)
-    #
-    #             if not_better_count == self.args.n_not_inc:
-    #                 break
-    #
-    #             self.model.print_weight_norm()
 
     # Heuristic Order Learning Method - Based on Mention-Local Similarity or Mention-Topical Similarity
     def train(self, org_train_dataset, org_dev_datasets, config):
@@ -760,12 +322,7 @@ class EDRanker:
         best_aida_B_f1 = 0.
         best_ave_rlts = []
         best_ave_f1 = 0.
-        # self.records = dict()
-        # self.records[-1] = dict()
-        # for di, (dname, data) in enumerate(dev_datasets):
-        #     predictions = self.predict(data, config['isDynamic'], order_learning)
-        #     self.records[-1][dname] = self.record
-        # json.dump(self.records, open('records.json', 'w'),indent=4)
+
         self.run_time = []
         for e in range(config['n_epochs']):
             shuffle(train_dataset)
@@ -812,74 +369,15 @@ class EDRanker:
                 ment_ids = Variable(torch.LongTensor(ment_ids).cuda())
                 ment_mask = Variable(torch.FloatTensor(ment_mask).cuda())
 
-                # get the model output
-                # alternate training for parameters within the order learning module and
-                # parameters within the disambiguation module
-                # if order_learning_count > 5 and len(batch) > 1:
-                #     # when starting optimizing the parameters within the order learning module, we have to
-                #     # set isTrain=False to get the rewards from validation, for that SL always give the ground
-                #     # truth answer so that we can't identify whether the present parameters are good or not
-                #     scores, _ = self.model.forward(token_ids, token_mask, entity_ids, entity_mask, p_e_m, mtype,
-                #                                    etype, ment_ids, ment_mask, gold=true_pos.view(-1, 1),
-                #                                    method=self.args.method,
-                #                                    isTrain=False, isDynamic=0, isOrderLearning=order_learning,
-                #                                    isOrderFixed=False)
-                #
-                #     loss = self.model.order_loss()
-                #
-                # else:
-                #     scores, _ = self.model.forward(token_ids, token_mask, entity_ids, entity_mask, p_e_m, mtype, etype,
-                #                                    ment_ids, ment_mask, gold=true_pos.view(-1, 1),
-                #                                    ment_ids, ment_mask, gold=true_pos.view(-1, 1),
-                #                                    method=self.args.method,
-                #                                    isTrain=True, isDynamic=0, isOrderLearning=order_learning,
-                #                                    isOrderFixed=False)
-                #     if order_learning:
-                #         _, targets = self.model.get_order_truth()
-                #         targets = Variable(torch.LongTensor(targets).cuda())
-                #
-                #         if scores.size(0) != targets.size(0):
-                #             print("Size mismatch!")
-                #             break
-                #         loss = self.model.loss(scores, targets, method=self.args.method)
-                #     else:
-                #         loss = self.model.loss(scores, true_pos, method=self.args.method)
-
-                # Uniform Training Process
-                # optimizer.zero_grad()
-                # scores, _ = self.model.forward(token_ids, token_mask, entity_ids, entity_mask, p_e_m, mtype, etype,
-                #                                ment_ids, ment_mask, gold=true_pos.view(-1, 1),
-                #                                method=self.args.method,
-                #                                isTrain=True, isDynamic=0, isOrderLearning=order_learning,
-                #                                isOrderFixed=True, isSort=self.args.sort)
-                # if order_learning:
-                #     _, targets = self.model.get_order_truth()
-                #     targets = Variable(torch.LongTensor(targets).cuda())
-                #
-                #     if scores.size(0) != targets.size(0):
-                #         print("Size mismatch!")
-                #         break
-                #     loss = self.model.loss(scores, targets, method=self.args.method)
-                # else:
-                #     loss = self.model.loss(scores, true_pos, method=self.args.method)
-                #
-                # loss.backward()
-                # optimizer.step()
-                # self.model.regularize(max_norm=4)
-                #
-                # loss = loss.cpu().data.numpy()
-                # total_loss += loss
-
-                # print('epoch', e, "%0.2f%%" % (dc / len(train_dataset) * 100), loss)
-
                 if self.args.method == "SL":
                     optimizer.zero_grad()
 
-                    scores, _ = self.model.forward(token_ids, token_mask, entity_ids, entity_mask, p_e_m, mtype, etype,
-                                                   ment_ids, ment_mask, desc_ids, desc_mask, gold=true_pos.view(-1, 1),
-                                                   method=self.args.method,
-                                                   isTrain=True, isDynamic=config['isDynamic'], isOrderLearning=order_learning,
-                                                   isOrderFixed=True, isSort=self.args.sort)
+                    # scores, _ = self.model.forward(token_ids, token_mask, entity_ids, entity_mask, p_e_m, mtype, etype,
+                    #                                ment_ids, ment_mask, desc_ids, desc_mask, gold=true_pos.view(-1, 1),
+                    #                                method=self.args.method,
+                    #                                isTrain=True, isDynamic=config['isDynamic'], isOrderLearning=order_learning,
+                    #                                isOrderFixed=True, isSort=self.args.sort)
+                    scores, _ = self.model.forward(token_ids, token_mask, entity_ids, entity_mask, p_e_m, mtype, etype, ment_ids, ment_mask, desc_ids, desc_mask, gold=true_pos.view(-1, 1), method=self.args.method, isTrain=True)
 
                     if order_learning:
                         _, targets = self.model.get_order_truth()
@@ -909,13 +407,14 @@ class EDRanker:
                         optimizer.zero_grad()
 
                         # get the model output
-                        scores, actions = self.model.forward(token_ids, token_mask, entity_ids, entity_mask, p_e_m,
-                                                             mtype, etype,
-                                                             ment_ids, ment_mask, desc_ids, desc_mask, gold=true_pos.view(-1, 1),
-                                                             method=self.args.method,
-                                                             isTrain=True, isDynamic=config['isDynamic'],
-                                                             isOrderLearning=order_learning,
-                                                             isOrderFixed=True, isSort=self.args.sort)
+                        # scores, actions = self.model.forward(token_ids, token_mask, entity_ids, entity_mask, p_e_m,
+                        #                                      mtype, etype,
+                        #                                      ment_ids, ment_mask, desc_ids, desc_mask, gold=true_pos.view(-1, 1),
+                        #                                      method=self.args.method,
+                        #                                      isTrain=True, isDynamic=config['isDynamic'],
+                        #                                      isOrderLearning=order_learning,
+                        #                                      isOrderFixed=True, isSort=self.args.sort)
+                        scores, actions = self.model.forward(token_ids, token_mask, entity_ids, entity_mask, p_e_m, mtype, etype, ment_ids, ment_mask, desc_ids, desc_mask, gold=true_pos.view(-1, 1), method=self.args.method, isTrain=True)
                         if order_learning:
                             _, targets = self.model.get_order_truth()
                             targets = Variable(torch.LongTensor(targets).cuda())
@@ -966,11 +465,6 @@ class EDRanker:
                         if correct/total >= rl_acc_threshold or early_stop_count >= 3:
                             break
 
-            # if order_learning_count == 10:
-            #     # Reset to the initial state
-            #     order_learning_count = 0
-            #     self.model.switch_order_learning(0)
-
             print('epoch', e, 'total loss', total_loss, total_loss / len(train_dataset), flush=True)
 
             if (e + 1) % eval_after_n_epochs == 0:
@@ -990,19 +484,11 @@ class EDRanker:
                     #self.records[e][dname] = self.record
                     f1 = D.eval(org_dev_datasets[di][1], predictions)
 
-                    # predictions_1 = self.predict(data, 1, order_learning)
-                    # f1_1 = D.eval(org_dev_datasets[di][1], predictions_1)
-                    #
-                    # predictions_2 = self.predict(data, 2, order_learning)
-                    # f1_2 = D.eval(org_dev_datasets[di][1], predictions_2)
-
                     print(dname, utils.tokgreen('micro F1: ' + str(f1)), flush=True)
 
                     with open(self.output_path, 'a') as eval_csv_f1:
                         eval_f1_csv_writer = csv.writer(eval_csv_f1)
                         eval_f1_csv_writer.writerow([dname, e, 0, f1])
-                        #eval_f1_csv_writer.writerow([dname, e, 1, f1_1])
-                        #eval_f1_csv_writer.writerow([dname, e, 2, f1_2])
                     temp_rlt.append([dname, f1])
                     if dname == 'aida-A':
                         dev_f1 = f1
@@ -1019,10 +505,10 @@ class EDRanker:
                     best_ave_f1 = ave_f1
                     best_ave_rlts = copy.deepcopy(temp_rlt)
 
-                if not config['isDynamic']:
-                    self.record_runtime('DCA')
-                else:
-                    self.record_runtime('local')
+                # if not config['isDynamic']:
+                #     self.record_runtime('DCA')
+                # else:
+                self.record_runtime('local')
 
                 #json.dump(self.records, open('records.json', 'w'), indent=4)
                 if config['lr'] == self.init_lr and dev_f1 >= self.args.dev_f1_change_lr:
@@ -1112,10 +598,8 @@ class EDRanker:
             token_ids = Variable(torch.LongTensor(token_ids).cuda())
             token_mask = Variable(torch.FloatTensor(token_mask).cuda())
 
-            desc_ids = torch.index_select(self.ent_desc, 0, entity_ids.view(-1)).view(entity_ids.size(0),
-                                                                                      entity_ids.size(1), -1)
-            desc_mask = torch.index_select(self.desc_mask, 0, entity_ids.view(-1)).view(entity_ids.size(0),
-                                                                                        entity_ids.size(1), -1)
+            desc_ids = torch.index_select(self.ent_desc, 0, entity_ids.view(-1)).view(entity_ids.size(0),entity_ids.size(1), -1)
+            desc_mask = torch.index_select(self.desc_mask, 0, entity_ids.view(-1)).view(entity_ids.size(0),entity_ids.size(1), -1)
             ment_ids, ment_mask = utils.make_equal_len(ment_ids, self.model.word_voca.unk_id)
             ment_ids = Variable(torch.LongTensor(ment_ids).cuda())
             ment_mask = Variable(torch.FloatTensor(ment_mask).cuda())
@@ -1123,12 +607,13 @@ class EDRanker:
             mtype = Variable(torch.FloatTensor([m['mtype'] for m in batch]).cuda())
             etype = Variable(torch.FloatTensor([m['selected_cands']['etype'] for m in batch]).cuda())
 
-            scores, actions = self.model.forward(token_ids, token_mask, entity_ids, entity_mask, p_e_m, mtype, etype,
-                                                 ment_ids, ment_mask, desc_ids, desc_mask, gold=true_pos.view(-1, 1),
-                                                 method=self.args.method,
-                                                 isTrain=False, isDynamic=dynamic_option,
-                                                 isOrderLearning=order_learning,
-                                                 isOrderFixed=True, isSort=self.args.sort)
+            # scores, actions = self.model.forward(token_ids, token_mask, entity_ids, entity_mask, p_e_m, mtype, etype,
+            #                                      ment_ids, ment_mask, desc_ids, desc_mask, gold=true_pos.view(-1, 1),
+            #                                      method=self.args.method,
+            #                                      isTrain=False, isDynamic=dynamic_option,
+            #                                      isOrderLearning=order_learning,
+            #                                      isOrderFixed=True, isSort=self.args.sort)
+            scores, actions = self.model.forward(token_ids, token_mask, entity_ids, entity_mask, p_e_m, mtype, etype, ment_ids, ment_mask, desc_ids, desc_mask, gold=true_pos.view(-1, 1), method=self.args.method, isTrain=False)
 
             scores = scores.cpu().data.numpy()
 
