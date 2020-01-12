@@ -1,14 +1,14 @@
 import numpy as np
-from DCA.vocabulary import Vocabulary
+from Local_ETHZ.vocabulary import Vocabulary
 import torch
 from torch.autograd import Variable
-import DCA.dataset as D
-import DCA.utils as utils
-import DCA.ntee as ntee
+import Local_ETHZ.dataset as D
+import Local_ETHZ.utils as utils
+import Local_ETHZ.ntee as ntee
 from random import shuffle
 import torch.optim as optim
-from DCA.abstract_word_entity import load as load_model
-from DCA.mulrel_ranker import MulRelRanker
+from Local_ETHZ.abstract_word_entity import load as load_model
+from Local_ETHZ.mulrel_ranker import MulRelRanker
 from pprint import pprint
 from itertools import count
 import copy

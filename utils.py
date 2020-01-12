@@ -1,4 +1,4 @@
-from DCA.vocabulary import Vocabulary
+from Local_ETHZ.vocabulary import Vocabulary
 import numpy as np
 
 stopword_input = "../data/stopwords-multi.txt"

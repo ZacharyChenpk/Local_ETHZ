@@ -1,13 +1,13 @@
 import sys
 sys.path.insert(0, "../")
 import json
-import DCA.dataset as D
+import Local_ETHZ.dataset as D
 import argparse
-import DCA.utils as utils
+import Local_ETHZ.utils as utils
 from pprint import pprint
 import torch
 import pickle
-from DCA.ed_ranker import EDRanker
+from Local_ETHZ.ed_ranker import EDRanker
 import csv
 import time
 
@@ -231,7 +231,7 @@ if __name__ == "__main__":
 
     if args.mode == 'train':
         print('training...')
-        config = {'lr': args.learning_rate, 'n_epochs': args.n_epochs, 'isDynamic':args.isDynamic, 'use_early_stop' : args.use_early_stop,}
+        config = {'lr': args.learning_rate, 'n_epochs': args.n_epochs, 'use_early_stop' : args.use_early_stop}
         # pprint(config)
         ranker.train(conll.train, dev_datasets, config)
 

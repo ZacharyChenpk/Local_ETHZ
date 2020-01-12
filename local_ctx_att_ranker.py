@@ -1,8 +1,8 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import DCA.utils as utils
-from DCA.abstract_word_entity import AbstractWordEntity
+import Local_ETHZ.utils as utils
+from Local_ETHZ.abstract_word_entity import AbstractWordEntity
 import copy
 
 

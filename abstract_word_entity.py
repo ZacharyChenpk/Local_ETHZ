@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import io
 import json
-from DCA.vocabulary import Vocabulary
+from Local_ETHZ.vocabulary import Vocabulary
 
 # # if gpu is to be used
 # use_cuda = torch.cuda.is_available()

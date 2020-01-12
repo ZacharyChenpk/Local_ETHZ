@@ -2,7 +2,7 @@ import torch
 import torch.nn.functional as F
 from torch.autograd import Variable
 import numpy as np
-from DCA.local_ctx_att_ranker import LocalCtxAttRanker
+from Local_ETHZ.local_ctx_att_ranker import LocalCtxAttRanker
 from torch.distributions import Categorical
 import copy
 
