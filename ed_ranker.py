@@ -379,17 +379,17 @@ class EDRanker:
                     #                                isOrderFixed=True, isSort=self.args.sort)
                     scores, _ = self.model.forward(token_ids, token_mask, entity_ids, entity_mask, p_e_m, mtype, etype, ment_ids, ment_mask, desc_ids, desc_mask, gold=true_pos.view(-1, 1), method=self.args.method, isTrain=True)
 
-                    if order_learning:
-                        _, targets = self.model.get_order_truth()
-                        targets = Variable(torch.LongTensor(targets).cuda())
+                    # if order_learning:
+                    #     _, targets = self.model.get_order_truth()
+                    #     targets = Variable(torch.LongTensor(targets).cuda())
 
-                        if scores.size(0) != targets.size(0):
-                            print("Size mismatch!")
-                            break
-                        # why can model compute loss without aware of 'order_learing'
-                        loss = self.model.loss(scores, targets, method=self.args.method)
-                    else:
-                        loss = self.model.loss(scores, true_pos, method=self.args.method)
+                    #     if scores.size(0) != targets.size(0):
+                    #         print("Size mismatch!")
+                    #         break
+                    #     # why can model compute loss without aware of 'order_learing'
+                    #     loss = self.model.loss(scores, targets, method=self.args.method)
+                    # else:
+                    loss = self.model.loss(scores, true_pos, method=self.args.method)
 
                     loss.backward()
                     optimizer.step()
@@ -415,17 +415,17 @@ class EDRanker:
                         #                                      isOrderLearning=order_learning,
                         #                                      isOrderFixed=True, isSort=self.args.sort)
                         scores, actions = self.model.forward(token_ids, token_mask, entity_ids, entity_mask, p_e_m, mtype, etype, ment_ids, ment_mask, desc_ids, desc_mask, gold=true_pos.view(-1, 1), method=self.args.method, isTrain=True)
-                        if order_learning:
-                            _, targets = self.model.get_order_truth()
-                            targets = Variable(torch.LongTensor(targets).cuda())
+                        # if order_learning:
+                        #     _, targets = self.model.get_order_truth()
+                        #     targets = Variable(torch.LongTensor(targets).cuda())
 
-                            if scores.size(0) != targets.size(0):
-                                print("Size mismatch!")
-                                break
+                        #     if scores.size(0) != targets.size(0):
+                        #         print("Size mismatch!")
+                        #         break
 
-                            loss = self.model.loss(scores, targets, method=self.args.method)
-                        else:
-                            loss = self.model.loss(scores, true_pos, method=self.args.method)
+                        #     loss = self.model.loss(scores, targets, method=self.args.method)
+                        # else:
+                        loss = self.model.loss(scores, true_pos, method=self.args.method)
 
                         loss.backward()
                         optimizer.step()
@@ -437,17 +437,17 @@ class EDRanker:
                         # compute accuracy
                         correct = 0
                         total = 0.
-                        if order_learning:
-                            _, targets = self.model.get_order_truth()
-                            for i in range(len(actions)):
-                                if targets[i] == actions[i]:
-                                    correct += 1
-                                total += 1
-                        else:
-                            for i in range(len(actions)):
-                                if true_pos.data[i] == actions[i]:
-                                    correct += 1
-                                total += 1
+                        # if order_learning:
+                        #     _, targets = self.model.get_order_truth()
+                        #     for i in range(len(actions)):
+                        #         if targets[i] == actions[i]:
+                        #             correct += 1
+                        #         total += 1
+                        # else:
+                        for i in range(len(actions)):
+                            if true_pos.data[i] == actions[i]:
+                                correct += 1
+                            total += 1
 
                         if not config['use_early_stop']:
                             break
@@ -526,8 +526,8 @@ class EDRanker:
                         if param.requires_grad:
                             print(param_name)
 
-                if dev_f1 >= self.args.dev_f1_start_order_learning and self.args.order_learning:
-                    order_learning = True
+                # if dev_f1 >= self.args.dev_f1_start_order_learning and self.args.order_learning:
+                #     order_learning = True
 
                 if is_counting:
                     if dev_f1 < best_f1:
@@ -621,24 +621,24 @@ class EDRanker:
             end_time = time.time()
             if self.rt_flag:
                 self.run_time.append([total_candidates, end_time-start_time])
-            if order_learning:
-                pred_entities = list()
+            # if order_learning:
+            #     pred_entities = list()
 
-                decision_order, _ = self.model.get_order_truth()
+            #     decision_order, _ = self.model.get_order_truth()
 
-                for mi, m in enumerate(batch):
-                    pi = pred_ids[decision_order.index(mi)]
-                    if m['selected_cands']['mask'][pi] == 1:
-                        pred_entities.append(m['selected_cands']['named_cands'][pi])
-                    else:
-                        if m['selected_cands']['mask'][0] == 1:
-                            pred_entities.append(m['selected_cands']['named_cands'][0])
-                        else:
-                            pred_entities.append('NIL')
-            else:
-                pred_entities = [m['selected_cands']['named_cands'][i] if m['selected_cands']['mask'][i] == 1
-                                 else (m['selected_cands']['named_cands'][0] if m['selected_cands']['mask'][0] == 1 else 'NIL')
-                                 for (i, m) in zip(pred_ids, batch)]
+            #     for mi, m in enumerate(batch):
+            #         pi = pred_ids[decision_order.index(mi)]
+            #         if m['selected_cands']['mask'][pi] == 1:
+            #             pred_entities.append(m['selected_cands']['named_cands'][pi])
+            #         else:
+            #             if m['selected_cands']['mask'][0] == 1:
+            #                 pred_entities.append(m['selected_cands']['named_cands'][0])
+            #             else:
+            #                 pred_entities.append('NIL')
+            # else:
+            pred_entities = [m['selected_cands']['named_cands'][i] if m['selected_cands']['mask'][i] == 1
+                             else (m['selected_cands']['named_cands'][0] if m['selected_cands']['mask'][0] == 1 else 'NIL')
+                             for (i, m) in zip(pred_ids, batch)]
 
             doc_names = [m['doc_name'] for m in batch]
             self.added_words = []

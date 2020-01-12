@@ -122,7 +122,8 @@ class MulRelRanker(LocalCtxAttRanker):
 
         # inputs = torch.cat([local_ent_scores.view(n_ments * n_cands, -1),
         #                     torch.log(p_e_m + 1e-20).view(n_ments * n_cands, -1)], dim=1)
-
+        print(inputs.size())
+        print(self.score_combine)
         scores = self.score_combine(inputs).view(n_ments, n_cands)
 
         return scores, self.actions
