@@ -480,7 +480,8 @@ class EDRanker:
                         self.rt_flag = True
                     else:
                         self.rt_flag = False
-                    predictions = self.predict(data, config['isDynamic'], order_learning)
+                    # predictions = self.predict(data, config['isDynamic'], order_learning)
+                    predictions = self.predict(data)
                     #self.records[e][dname] = self.record
                     f1 = D.eval(org_dev_datasets[di][1], predictions)
 
@@ -571,7 +572,8 @@ class EDRanker:
                 runtime_csv_writer.writerow([cands, ti])
             runtime_csv.close()
 
-    def predict(self, data, dynamic_option, order_learning):
+    # def predict(self, data, dynamic_option, order_learning):
+    def predict(self, data):
         predictions = {items[0]['doc_name']: [] for items in data}
         self.model.eval()
         #self.record = []
@@ -655,3 +657,4 @@ class EDRanker:
                 for dname, entity in zip(doc_names, pred_entities):
                     predictions[dname].append({'pred': (entity, 0.)})
             #self.record.append(dict({'added_words':self.added_words, 'added_ents':self.added_ents}))
+        return predictions

@@ -66,7 +66,7 @@ class MulRelRanker(LocalCtxAttRanker):
         # Typing feature
         self.type_emb = torch.nn.Parameter(torch.randn([4, 5]))
         self.score_combine = torch.nn.Sequential(
-                torch.nn.Linear(5, self.hid_dims),
+                torch.nn.Linear(3, self.hid_dims),
                 torch.nn.ReLU(),
                 torch.nn.Dropout(p=self.dr),
                 torch.nn.Linear(self.hid_dims, 1))
@@ -122,8 +122,11 @@ class MulRelRanker(LocalCtxAttRanker):
 
         # inputs = torch.cat([local_ent_scores.view(n_ments * n_cands, -1),
         #                     torch.log(p_e_m + 1e-20).view(n_ments * n_cands, -1)], dim=1)
-        print(inputs.size())
-        print(self.score_combine)
+        # print(inputs.size())
+        # print(local_ent_scores.size())
+        # print(p_e_m.size())
+        # print(tm.size())
+        # print(self.score_combine)
         scores = self.score_combine(inputs).view(n_ments, n_cands)
 
         return scores, self.actions
@@ -616,7 +619,7 @@ class MulRelRanker(LocalCtxAttRanker):
     def loss(self, scores, true_pos, method="SL", lamb=1e-7):
         loss = None
 
-        print("----MulRelRanker Loss----")
+        # print("----MulRelRanker Loss----")
         if method == "SL":
             loss = F.multi_margin_loss(scores, true_pos, margin=self.margin)
         elif method == "RL":
