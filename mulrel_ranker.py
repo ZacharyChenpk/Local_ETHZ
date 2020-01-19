@@ -128,6 +128,7 @@ class MulRelRanker(LocalCtxAttRanker):
         # print(tm.size())
         # print(self.score_combine)
         scores = self.score_combine(inputs).view(n_ments, n_cands)
+        # assert False
 
         return scores, self.actions
         #################  DELETING #################
