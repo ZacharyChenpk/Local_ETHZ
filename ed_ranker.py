@@ -15,10 +15,10 @@ import copy
 import csv
 import json
 import time
+from collections import Counter
 
 ModelClass = MulRelRanker
 wiki_prefix = 'en.wikipedia.org/wiki/'
-
 
 class EDRanker:
     """
@@ -37,6 +37,7 @@ class EDRanker:
         config['word_embeddings'][config['word_voca'].unk_id] = 1e-10
         self.one_entity_once = config['one_entity_once']
         self.seq_len = config['seq_len']
+        self.ent_inlinks = config['entity_inlinks']
 
         self.word_vocab = config['word_voca']
         self.ent_vocab = config['entity_voca']
@@ -157,7 +158,8 @@ class EDRanker:
                               'mtype': mtype,
                               'etype': etype,
                               'doc_name': doc_name,
-                              'raw': m
+                              'raw': m,
+                              'prev_dist': m['prev_dist']
                               })
 
             # one doc one time here
@@ -165,29 +167,34 @@ class EDRanker:
                 # note: this shouldn't affect the order of prediction because we use doc_name to add predicted entities,
                 # and we don't shuffle the data for prediction
 
-                # ----old implementation-----
-                # seq_len seems to be the mini-batch-size in one train doc
-                if self.seq_len == 0:
-                    if len(items) > 100:
-                        print(len(items))
-                        for k in range(0, len(items), 100):
-                            data.append(items[k:min(len(items), k + 100)])
-                    else:
-                        data.append(items)
-                else:
-                # ----new implementation----
-                # each doc is regarded as one batch
-                # data.append(items)
-                    if isTrain:
-                        for k in range(0, len(items), self.seq_len // 2):
-                            data.append(items[max(0, k - self.seq_len//2) : min(len(items), k + self.seq_len//2)])
-                    else:
-                        if self.one_entity_once:
-                            for k in range(0, len(items)):
-                                data.append(items[max(0, k-self.seq_len+1): k+1])
-                        else:
-                            for k in range(0, len(items), self.seq_len):
-                                data.append(items[k:min(len(items), k + self.seq_len)])
+                # # ----old implementation-----
+                # # seq_len seems to be the mini-batch-size in one train doc
+                # if self.seq_len == 0:
+                #     if len(items) > 100:
+                #         print(len(items))
+                #         for k in range(0, len(items), 100):
+                #             data.append(items[k:min(len(items), k + 100)])
+                #     else:
+                #         data.append(items)
+                # else:
+                # # ----new implementation----
+                # # each doc is regarded as one batch
+                # # data.append(items)
+                #     if isTrain:
+                #         for k in range(0, len(items), self.seq_len // 2):
+                #             data.append(items[max(0, k - self.seq_len//2) : min(len(items), k + self.seq_len//2)])
+                #     else:
+                #         if self.one_entity_once:
+                #             for k in range(0, len(items)):
+                #                 data.append(items[max(0, k-self.seq_len+1): k+1])
+                #         else:
+                #             for k in range(0, len(items), self.seq_len):
+                #                 data.append(items[k:min(len(items), k + self.seq_len)])
+
+                # in order to use GCN, we try to process one whole doc for one time 
+                ### New ###
+                data.append(items)
+                ###     ###
 
         # every element in 'data' is a list of items
         return self.prerank(data, predict)
@@ -286,10 +293,46 @@ class EDRanker:
         print('recall', has_gold / total)
         return new_dataset
 
+    def gold_e_graph_build(self, dataset):
+        cand_to_idxs = {}
+        idx_to_cands = {}
+        gold_e_adjs = {}
+        for dc, batch in enumerate(dataset):
+            sele_cand = [m['selected_cands']['cands'] for m in batch]
+            true_pos = [m['selected_cands']['true_pos'] for m in batch]
+            true_cands = [sele_cand[idx][true_pos[idx]] if true_pos[idx] > -1 else sele_cand[idx][0] for idx in range(len(true_pos))]
+            cand_to_idx, idx_to_cand, e_adj = self.e_graph_build(true_cands)
+            cand_to_idxs[dc] = cand_to_idx
+            idx_to_cands[dc] = idx_to_cand
+            gold_e_adjs[dc] = e_adj
+        return cand_to_idxs, idx_to_cand, gold_e_adjs
+
+    def e_graph_build(self, cand_ids):
+        cand_to_idx = {}
+        idx_to_cand = cand_idx
+        node_counter = Counter()
+        for c in cand_ids:
+            cand_to_idx[c] = len(cand_to_idx)
+            neighbor = self.ent_inlinks[c]
+            node_counter.update(neighbor)
+        for n in list(node_counter.elements()):
+            if node_counter[n] > 1 and (n not in cand_to_idx):
+                cand_to_idx[n] = len(cand_to_idx)
+                idx_to_cand.append(n)
+        n = len(idx_to_cand)
+        e_adj = np.zeros((n, n))
+        for cand, idx in cand_to_idx.items():
+            neighbor = [cand_to_idx[a] if (a in cand_to_idx) for a in self.ent_inlinks[cand]]
+            e_adj[idx, neighbor] = 1
+            e_adj[neighbor, idx] = 1
+        return cand_to_idx, idx_to_cand, e_adj
+
+
     # Heuristic Order Learning Method - Based on Mention-Local Similarity or Mention-Topical Similarity
     def train(self, org_train_dataset, org_dev_datasets, config):
         print('extracting training data')
         train_dataset = self.get_data_items(org_train_dataset, predict=False, isTrain=True)
+        gold_cand_to_idxs, gold_idx_to_cand, gold_e_adjs = self.gold_e_graph_build(train_dataset)
         print('#train docs', len(train_dataset))
         self.init_lr = config['lr']
         dev_datasets = []

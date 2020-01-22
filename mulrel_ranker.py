@@ -4,6 +4,7 @@ from torch.autograd import Variable
 import numpy as np
 from Local_ETHZ.local_ctx_att_ranker import LocalCtxAttRanker
 from torch.distributions import Categorical
+from Local_ETHZ.gcn.model import GCN
 import copy
 
 np.set_printoptions(threshold=20)
@@ -46,6 +47,7 @@ class MulRelRanker(LocalCtxAttRanker):
         # self.ment2ment_score_mat_diag = torch.nn.Parameter(torch.ones(self.emb_dims))
 
         self.cnn = torch.nn.Conv1d(self.emb_dims, 64, kernel_size=3)
+        self.gcn = GCN(self.emb_dims, self.emb_dims, self.emb_dims, config['gdr'])
 
         self.saved_log_probs = []
         self.rewards = []

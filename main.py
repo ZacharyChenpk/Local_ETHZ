@@ -49,6 +49,9 @@ parser.add_argument('--seed', type=int, default=543, metavar='N',
 parser.add_argument("--dropout_rate", type=float,
                     help="dropout rate for ranker model",
                     default=0.2)
+parser.add_argument("--dropout_GCN", type=float,
+                    help="dropout rate for GCN model",
+                    default=0.2)
 parser.add_argument('--gamma', type=float, default=0.9, metavar='G',
                     help='discount factor (default: 0.99)')
 # parser.add_argument("--order_learning", type=str2bool, nargs='?', default='n', const=True,
@@ -202,6 +205,7 @@ if __name__ == "__main__":
               'entity_embeddings': entity_embeddings,
               'entity_inlinks': ent_inlinks_dict,
               'dr': args.dropout_rate,
+              'gdr': args.dropout_GCN,
               'gamma': args.gamma,
               # 'order_learning': args.order_learning,
               # 'dca_method' : args.dca_method,

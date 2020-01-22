@@ -79,13 +79,26 @@ def read_csv_file(path):
             else:
                 gold = (','.join(gold[3:]).replace('"', '%22').replace(' ', '_'), 1e-5, -1)
 
+            first_flag = False
             if doc_name not in data:
                 data[doc_name] = []
+                first_flag = True
+
+            ### New ###
+            prev_dist = -1
+            if first_flag = False:
+                prev_rctx = data[doc_name][-1]['context'][1]
+                find = prev_rctx.find(mention)
+                if find > -1:
+                    prev_dist = prev_rctx.count(" ",end=find) + 1
+            ###     ###
+
             data[doc_name].append({'mention': mention,
                                    'mtype': mtype,
                                    'context': (lctx, rctx),
                                    'candidates': cands,
-                                   'gold': gold})
+                                   'gold': gold,
+                                   'prev_dist': prev_dist})
     return data
 
 
@@ -211,6 +224,7 @@ def read_conll_file(data, path):
 
 def reorder_dataset(data, order):
     # the default order is "offset"
+    # Note: using this function will lead to the loss of prev_dist info !!!
     if order == "random" or order == "size":
         for doc_name, content in data.items():
             conll_doc = content[0]['conll_doc']
@@ -251,13 +265,38 @@ def eval(testset, system_pred):
     f1 = 2 * precision * recall / (precision + recall)
     return f1
 
+def doc_m_graph_build(data, edge_window=30):
+    ment_lists = {}
+    ment_adjs = []
+    for doc_name, content in data.items():
+        for i, m in enumerate(content): 
+            ment_list[m['mention']] = i
+        dist_list = [m['prev_dist'] for m in content]
+        n = len(mentlist)
+        ment_adj = np.zeros((n, n))
+        for i, d in enumerate(dist_list):
+            total_dist = 0
+            if i == 0:
+                continue
+            for j in range(i, 0, -1):
+                if dist_list[i] < 0:
+                    break
+                total_dist += dist_list[i]
+                if total_dist <= edge_window:
+                    ment_adj[i][j-1] = 1
+                    ment_adj[j-1][i] = 1
+                else:
+                    break
+        ment_lists.append(ment_list)
+        ment_adjs.append(ment_adj)
+    return ment_lists, ment_adjs
 
 class CoNLLDataset:
     """
     reading dataset from CoNLL dataset, extracted by https://github.com/dalab/deep-ed/
     """
 
-    def __init__(self, path, conll_path, person_path, order, method):
+    def __init__(self, path, conll_path, person_path, order, method, edge_window=30):
         print('load csv')
         self.train = read_csv_file(path + '/aida_train.csv')
         self.testA = read_csv_file(path + '/aida_testA.csv')
@@ -300,3 +339,11 @@ class CoNLLDataset:
         reorder_dataset(self.clueweb, order)
         reorder_dataset(self.wikipedia, order)
 
+        self.train_mlist, self.train_madj = doc_m_graph_build(self.train, edge_window=edge_window)
+        self.testA_mlist, self.testA_madj = doc_m_graph_build(self.testA, edge_window=edge_window)
+        self.testB_mlist, self.testB_madj = doc_m_graph_build(self.testB, edge_window=edge_window)
+        self.msnbc_mlist, self.msnbc_madj = doc_m_graph_build(self.msnbc, edge_window=edge_window)
+        self.ace2004_mlist, self.ace2004_madj = doc_m_graph_build(self.ace2004, edge_window=edge_window)
+        self.aquaint_mlist, self.aquaint_madj = doc_m_graph_build(self.aquaint, edge_window=edge_window)
+        self.clueweb_mlist, self.clueweb_madj = doc_m_graph_build(self.clueweb, edge_window=edge_window)
+        self.wikipedia_mlist, self.wikipedia_madj = doc_m_graph_build(self.wikipedia, edge_window=edge_window)
