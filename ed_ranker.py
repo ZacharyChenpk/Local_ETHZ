@@ -309,12 +309,14 @@ class EDRanker:
 
     def e_graph_build(self, cand_ids):
         cand_to_idx = {}
-        idx_to_cand = cand_idx
+        idx_to_cand = cand_ids
         node_counter = Counter()
+        max_cand = max(self.ent_inlinks.keys())
         for c in cand_ids:
             cand_to_idx[c] = len(cand_to_idx)
-            neighbor = self.ent_inlinks[c]
-            node_counter.update(neighbor)
+            if c in self.ent_inlinks:
+                neighbor = self.ent_inlinks[c]
+                node_counter.update(neighbor)
         for n in list(node_counter.elements()):
             if node_counter[n] > 1 and (n not in cand_to_idx):
                 cand_to_idx[n] = len(cand_to_idx)
@@ -322,6 +324,8 @@ class EDRanker:
         n = len(idx_to_cand)
         e_adj = np.zeros((n, n))
         for cand, idx in cand_to_idx.items():
+            if cand not in self.ent_inlinks:
+                continue
             neighbor = [cand_to_idx[a] for a in self.ent_inlinks[cand] if a in cand_to_idx]
             e_adj[idx, neighbor] = 1
             e_adj[neighbor, idx] = 1
