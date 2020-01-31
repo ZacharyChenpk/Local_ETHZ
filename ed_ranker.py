@@ -322,7 +322,7 @@ class EDRanker:
         n = len(idx_to_cand)
         e_adj = np.zeros((n, n))
         for cand, idx in cand_to_idx.items():
-            neighbor = [cand_to_idx[a] if (a in cand_to_idx) for a in self.ent_inlinks[cand]]
+            neighbor = [cand_to_idx[a] for a in self.ent_inlinks[cand] if a in cand_to_idx]
             e_adj[idx, neighbor] = 1
             e_adj[neighbor, idx] = 1
         return cand_to_idx, idx_to_cand, e_adj

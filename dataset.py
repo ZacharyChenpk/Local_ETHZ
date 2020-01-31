@@ -3,6 +3,7 @@ import random
 from collections import OrderedDict
 from pprint import pprint
 import pickle as pkl
+import numpy as np
 import json
 doc2type = pkl.load(open('../data/doc2type.pkl', 'rb'))
 entity2type = pkl.load(open('../data/entity2type.pkl', 'rb'))
@@ -86,11 +87,11 @@ def read_csv_file(path):
 
             ### New ###
             prev_dist = -1
-            if first_flag = False:
+            if first_flag == False:
                 prev_rctx = data[doc_name][-1]['context'][1]
                 find = prev_rctx.find(mention)
                 if find > -1:
-                    prev_dist = prev_rctx.count(" ",end=find) + 1
+                    prev_dist = prev_rctx.count(" ",0,find) + 1
             ###     ###
 
             data[doc_name].append({'mention': mention,
@@ -267,28 +268,28 @@ def eval(testset, system_pred):
 
 def doc_m_graph_build(data, edge_window=30):
     ment_lists = {}
-    ment_adjs = []
+    ment_adjs = {}
     for doc_name, content in data.items():
-        for i, m in enumerate(content): 
-            ment_list[m['mention']] = i
+        ment_list = [m['mention'] for m in content]
         dist_list = [m['prev_dist'] for m in content]
-        n = len(mentlist)
+        print(doc_name, ":", dist_list)
+        n = len(ment_list)
         ment_adj = np.zeros((n, n))
         for i, d in enumerate(dist_list):
             total_dist = 0
             if i == 0:
                 continue
             for j in range(i, 0, -1):
-                if dist_list[i] < 0:
+                if dist_list[j] < 0:
                     break
-                total_dist += dist_list[i]
+                total_dist += dist_list[j]
                 if total_dist <= edge_window:
                     ment_adj[i][j-1] = 1
                     ment_adj[j-1][i] = 1
                 else:
                     break
-        ment_lists.append(ment_list)
-        ment_adjs.append(ment_adj)
+        ment_lists[doc_name]=ment_list
+        ment_adjs[doc_name]=ment_adj
     return ment_lists, ment_adjs
 
 class CoNLLDataset:
