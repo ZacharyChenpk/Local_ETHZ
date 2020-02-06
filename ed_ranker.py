@@ -5,6 +5,7 @@ from torch.autograd import Variable
 import Local_ETHZ.dataset as D
 import Local_ETHZ.utils as utils
 import Local_ETHZ.ntee as ntee
+from Local_ETHZ.gcn.model import GCN
 from random import shuffle
 import torch.optim as optim
 from Local_ETHZ.abstract_word_entity import load as load_model
@@ -38,6 +39,7 @@ class EDRanker:
         self.one_entity_once = config['one_entity_once']
         self.seq_len = config['seq_len']
         self.ent_inlinks = config['entity_inlinks']
+        self.n_sample = config['n_sample']
 
         self.word_vocab = config['word_voca']
         self.ent_vocab = config['entity_voca']
@@ -62,6 +64,9 @@ class EDRanker:
         self.load_ent_desc(500, 3)
 
         self.prerank_model.cuda()
+        self.emb_dims = self.model.emb_dims
+        self.negsam_graph_cache = {}
+        self.true_cands = {}
         self.model.cuda()
 
     def load_ent_desc(self, max_desc_len, n_grams):
@@ -301,6 +306,7 @@ class EDRanker:
             sele_cand = [m['selected_cands']['cands'] for m in batch]
             true_pos = [m['selected_cands']['true_pos'] for m in batch]
             true_cands = [sele_cand[idx][true_pos[idx]] if true_pos[idx] > -1 else sele_cand[idx][0] for idx in range(len(true_pos))]
+            self.true_cands[dc] = true_cands
             cand_to_idx, idx_to_cand, e_adj = self.e_graph_build(true_cands)
             cand_to_idxs[dc] = cand_to_idx
             idx_to_cands[dc] = idx_to_cand
@@ -331,16 +337,27 @@ class EDRanker:
             e_adj[neighbor, idx] = 1
         return cand_to_idx, idx_to_cand, e_adj
 
+    def ment_neg_sample(self, n_sample, entity_ids, true_pos, entity_mask):
+        # entity_ids is n_ment * n_cand(k) indexes
+        n_ment, n_cand = entity_ids.size()
+        copy_entity_mask = entity_mask.index_put((torch.LongTensor(np.arange(n_ment)), torch.LongTensor(true_pos)), torch.zeros(n_ment))
+        sample_idx = torch.multinomial(copy_entity_mask, n_sample, replacement=True)
+        i_matrix = torch.LongTensor(np.arange(n_ment)).unsqueeze(1).expand((-1, n_sample))
+        copy_entity_mask.index_put_((torch.flatten(i_matrix), torch.flatten(sample_idx)), torch.zeros(n_ment * n_sample))
+        # sample_idx is n_ment * n_sample
+        # copy_entity_mask: n_ment * n_cand
+        return sample_idx, copy_entity_mask
 
     # Heuristic Order Learning Method - Based on Mention-Local Similarity or Mention-Topical Similarity
     def train(self, org_train_dataset, org_dev_datasets, config):
         print('extracting training data')
+        org_train_dataset, train_mlist, train_madj = org_train_dataset
         train_dataset = self.get_data_items(org_train_dataset, predict=False, isTrain=True)
         gold_cand_to_idxs, gold_idx_to_cand, gold_e_adjs = self.gold_e_graph_build(train_dataset)
         print('#train docs', len(train_dataset))
         self.init_lr = config['lr']
         dev_datasets = []
-        for dname, data in org_dev_datasets:
+        for dname, data, _, _ in org_dev_datasets:
             dev_datasets.append((dname, self.get_data_items(data, predict=True, isTrain=False)))
             print(dname, '#dev docs', len(dev_datasets[-1][1]))
 
@@ -424,7 +441,49 @@ class EDRanker:
                     #                                method=self.args.method,
                     #                                isTrain=True, isDynamic=config['isDynamic'], isOrderLearning=order_learning,
                     #                                isOrderFixed=True, isSort=self.args.sort)
-                    scores, _ = self.model.forward(token_ids, token_mask, entity_ids, entity_mask, p_e_m, mtype, etype, ment_ids, ment_mask, desc_ids, desc_mask, gold=true_pos.view(-1, 1), method=self.args.method, isTrain=True)
+
+                    # scores, _ = self.model.forward(token_ids, token_mask, entity_ids, entity_mask, p_e_m, mtype, etype, ment_ids, ment_mask, desc_ids, desc_mask, gold=true_pos.view(-1, 1), method=self.args.method, isTrain=True)
+
+                    # sample_idx: n_ment * n_sample
+                    # copy_entity_mask: n_ment * n_cand
+                    sample_idx, copy_entity_mask = self.ment_neg_sample(self.n_sample, entity_ids, true_pos, entity_mask)
+
+                    n_ment, n_cand = entity_ids.size()
+                    e_cand_to_idxs = [[] for _ in range(n_ment) ]
+                    e_idx_to_cands = [[] for _ in range(n_ment) ]
+                    e_adjs = [[] for _ in range(n_ment) ]
+                    for i in range(n_ment):
+                        for j in range(self.n_sample):
+                            if i in self.negsam_graph_cache and sample_idx[i][j] in self.negsam_graph_cache[i]:
+                                cand_to_idx, idx_to_cand, e_adj = negsam_graph_cache[i][sample_idx[i][j]]
+                                e_cand_to_idxs[i].append(cand_to_idx)
+                                e_idx_to_cands[i].append(idx_to_cand)
+                                e_adjs[i].append(e_adj)
+                            else:
+                                true_cands = copy.deepcopy(self.true_cands[dc])
+                                sele_cand = [m['selected_cands']['cands'] for m in batch]
+                                true_cands[i] = sele_cand[i][sample_idx[i][j]]
+                                cand_to_idx, idx_to_cand, e_adj = self.e_graph_build(true_cands)
+                                if i not in self.negsam_graph_cache:
+                                    self.negsam_graph_cache[i] = {}
+                                negsam_graph_cache[i][sample_idx[i][j]] = cand_to_idx, idx_to_cand, e_adj
+                                e_cand_to_idxs[i].append(cand_to_idx)
+                                e_idx_to_cands[i].append(idx_to_cand)
+                                e_adjs[i].append(e_adj)
+
+                    # e_adjs = torch.LongTensor(e_adjs)
+                    # e_adjs: n_ment * n_sample * n_entity * n_entity
+                    gold_e = (gold_cand_to_idxs[dc], gold_idx_to_cand[dc], gold_e_adjs[dc])
+                    e_cand_to_idxs.append(gold_cand_to_idxs[dc])
+                    e_idx_to_cands.append(gold_idx_to_cand[dc])
+                    e_adjs.append(gold_e_adjs[dc])
+                    new_adjs, new_node_cands, new_node_mask = utils.e_graph_batch_padding(e_cand_to_idxs, e_idx_to_cands, e_adjs, n_ment, n_sample)
+                    # new_adjs: n_ment * (n_sample+1) * n_node * n_node
+                    # new_node_cands: n_ment * (n_sample+1) * n_node
+                    # new_node_mask: n_ment * (n_sample+1) * n_node
+                    nega_e = (new_adjs, new_node_cands, new_node_mask)
+
+                    scores, _ = self.model.forward(token_ids, token_mask, entity_ids, copy_entity_mask, p_e_m, mtype, etype, ment_ids, ment_mask, desc_ids, desc_mask, train_mlist[dc], train_madj[dc], gold_e, nega_e, sample_idx, gold=true_pos.view(-1, 1), method=self.args.method, isTrain=True)
 
                     # if order_learning:
                     #     _, targets = self.model.get_order_truth()
@@ -436,7 +495,7 @@ class EDRanker:
                     #     # why can model compute loss without aware of 'order_learing'
                     #     loss = self.model.loss(scores, targets, method=self.args.method)
                     # else:
-                    loss = self.model.loss(scores, true_pos, method=self.args.method)
+                    loss = self.model.loss(scores, torch.LongTensor([n_sample]*n_ment), method=self.args.method)
 
                     loss.backward()
                     optimizer.step()
@@ -445,72 +504,72 @@ class EDRanker:
                     loss = loss.cpu().data.numpy()
                     total_loss += loss
 
-                elif self.args.method == "RL":
-                    action_memory = []
-                    early_stop_count = 0
+                # elif self.args.method == "RL":
+                #     action_memory = []
+                #     early_stop_count = 0
                     
-                    # the actual episode number for one doc is determined by decision accuracy
-                    for i_episode in count(1):
-                        optimizer.zero_grad()
+                #     # the actual episode number for one doc is determined by decision accuracy
+                #     for i_episode in count(1):
+                #         optimizer.zero_grad()
 
-                        # get the model output
-                        # scores, actions = self.model.forward(token_ids, token_mask, entity_ids, entity_mask, p_e_m,
-                        #                                      mtype, etype,
-                        #                                      ment_ids, ment_mask, desc_ids, desc_mask, gold=true_pos.view(-1, 1),
-                        #                                      method=self.args.method,
-                        #                                      isTrain=True, isDynamic=config['isDynamic'],
-                        #                                      isOrderLearning=order_learning,
-                        #                                      isOrderFixed=True, isSort=self.args.sort)
-                        scores, actions = self.model.forward(token_ids, token_mask, entity_ids, entity_mask, p_e_m, mtype, etype, ment_ids, ment_mask, desc_ids, desc_mask, gold=true_pos.view(-1, 1), method=self.args.method, isTrain=True)
-                        # if order_learning:
-                        #     _, targets = self.model.get_order_truth()
-                        #     targets = Variable(torch.LongTensor(targets).cuda())
+                #         # get the model output
+                #         # scores, actions = self.model.forward(token_ids, token_mask, entity_ids, entity_mask, p_e_m,
+                #         #                                      mtype, etype,
+                #         #                                      ment_ids, ment_mask, desc_ids, desc_mask, gold=true_pos.view(-1, 1),
+                #         #                                      method=self.args.method,
+                #         #                                      isTrain=True, isDynamic=config['isDynamic'],
+                #         #                                      isOrderLearning=order_learning,
+                #         #                                      isOrderFixed=True, isSort=self.args.sort)
+                #         scores, actions = self.model.forward(token_ids, token_mask, entity_ids, entity_mask, p_e_m, mtype, etype, ment_ids, ment_mask, desc_ids, desc_mask, gold=true_pos.view(-1, 1), method=self.args.method, isTrain=True)
+                #         # if order_learning:
+                #         #     _, targets = self.model.get_order_truth()
+                #         #     targets = Variable(torch.LongTensor(targets).cuda())
 
-                        #     if scores.size(0) != targets.size(0):
-                        #         print("Size mismatch!")
-                        #         break
+                #         #     if scores.size(0) != targets.size(0):
+                #         #         print("Size mismatch!")
+                #         #         break
 
-                        #     loss = self.model.loss(scores, targets, method=self.args.method)
-                        # else:
-                        loss = self.model.loss(scores, true_pos, method=self.args.method)
+                #         #     loss = self.model.loss(scores, targets, method=self.args.method)
+                #         # else:
+                #         loss = self.model.loss(scores, true_pos, method=self.args.method)
 
-                        loss.backward()
-                        optimizer.step()
-                        #self.model.regularize(max_norm=4)
+                #         loss.backward()
+                #         optimizer.step()
+                #         #self.model.regularize(max_norm=4)
 
-                        loss = loss.cpu().data.numpy()
-                        total_loss += loss
+                #         loss = loss.cpu().data.numpy()
+                #         total_loss += loss
 
-                        # compute accuracy
-                        correct = 0
-                        total = 0.
-                        # if order_learning:
-                        #     _, targets = self.model.get_order_truth()
-                        #     for i in range(len(actions)):
-                        #         if targets[i] == actions[i]:
-                        #             correct += 1
-                        #         total += 1
-                        # else:
-                        for i in range(len(actions)):
-                            if true_pos.data[i] == actions[i]:
-                                correct += 1
-                            total += 1
+                #         # compute accuracy
+                #         correct = 0
+                #         total = 0.
+                #         # if order_learning:
+                #         #     _, targets = self.model.get_order_truth()
+                #         #     for i in range(len(actions)):
+                #         #         if targets[i] == actions[i]:
+                #         #             correct += 1
+                #         #         total += 1
+                #         # else:
+                #         for i in range(len(actions)):
+                #             if true_pos.data[i] == actions[i]:
+                #                 correct += 1
+                #             total += 1
 
-                        if not config['use_early_stop']:
-                            break
+                #         if not config['use_early_stop']:
+                #             break
 
-                        if i_episode > len(batch)/2:
-                            break
+                #         if i_episode > len(batch)/2:
+                #             break
 
-                        if actions == action_memory:
-                            early_stop_count += 1
-                        else:
-                            del action_memory[:]
-                            action_memory = copy.deepcopy(actions)
-                            early_stop_count = 0
+                #         if actions == action_memory:
+                #             early_stop_count += 1
+                #         else:
+                #             del action_memory[:]
+                #             action_memory = copy.deepcopy(actions)
+                #             early_stop_count = 0
 
-                        if correct/total >= rl_acc_threshold or early_stop_count >= 3:
-                            break
+                #         if correct/total >= rl_acc_threshold or early_stop_count >= 3:
+                #             break
 
             print('epoch', e, 'total loss', total_loss, total_loss / len(train_dataset), flush=True)
 

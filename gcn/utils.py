@@ -88,23 +88,64 @@ def load_data(dataset_str):
 
     return adj, features, y_train, y_val, y_test, train_mask, val_mask, test_mask
 
-def normalize(adj, is_feature=False):
-    if not is_feature:
-        adj = adj + adj.T.multiply(adj.T > adj) - adj.T.multiply(adj.T > adj)
-        n = adj.shape[0]
-        adj = adj + sp.diags([1]*n)
-    rowsum = np.array(adj.sum(1))
-    dsqrt = np.power(rowsum, -0.5).reshape(-1)
-    dsqrt[np.isinf(dsqrt)] = 0.
-    dsqrt = sp.diags(dsqrt)
-    return sp.coo_matrix(dsqrt.dot(adj).dot(dsqrt))
+# def normalize(adj, is_feature=False):
+#     if not is_feature:
+#         adj = adj + adj.T.multiply(adj.T > adj) - adj.T.multiply(adj.T > adj)
+#         n = adj.shape[0]
+#         adj = adj + sp.diags([1]*n)
+#     rowsum = np.array(adj.sum(1))
+#     dsqrt = np.power(rowsum, -0.5).reshape(-1)
+#     dsqrt[np.isinf(dsqrt)] = 0.
+#     dsqrt = sp.diags(dsqrt)
+#     return sp.coo_matrix(dsqrt.dot(adj).dot(dsqrt))
+
+def normalize(adj):
+    n = adj.size(0)
+    adj = adj + torch.eye(n)
+    rowsum = torch.sum(adj, dim=1)
+    dsqrt = rowsum.rsqrt()
+    dsqrt[torch.isinf(dsqrt)] = 0.
+    dsqrt[torch.isnan(dsqrt)] = 0.
+    dsqrt = torch.diags(dsqrt)
+    return dsqrt.mm(adj).mm(dsqrt)
+
+def batch_normalize(adj):
+    bsz = adj.size(0)
+    n = adj.size(1)
+    adj = adj + torch.eye(n).repeat(bsz,1,1)
+    rowsum = torch.sum(adj, dim=2)
+    dsqrt = rowsum.rsqrt()
+    dsqrt[torch.isinf(dsqrt)] = 0.
+    dsqrt[torch.isnan(dsqrt)] = 0.
+    dsqrt = dsqrt.repeat(1,1,n).mul(torch.eye(n).repeat(bsz,1,1))
+    return dsqrt.bmm(adj).bmm(dsqrt)
+
+# def feature_norm(f):
+#     rowsum = np.array(f.sum(1))
+#     r_inv = np.power(rowsum, -1).flatten()
+#     r_inv[np.isinf(r_inv)] = 0.
+#     r_mat_inv = sp.diags(r_inv)
+#     f = r_mat_inv.dot(f)
+#     return f
 
 def feature_norm(f):
-    rowsum = np.array(f.sum(1))
-    r_inv = np.power(rowsum, -1).flatten()
-    r_inv[np.isinf(r_inv)] = 0.
-    r_mat_inv = sp.diags(r_inv)
-    f = r_mat_inv.dot(f)
+    rowsum = torch.sum(f, dim=1)
+    r_inv = torch.reciprocal(rowsum)
+    r_inv[torch.isinf(r_inv)] = 0.
+    r_inv[torch.isnan(r_inv)] = 0.
+    r_mat_inv = torch.diags(r_inv)
+    f = r_mat_inv.mm(f)
+    return f
+
+def batch_feature_norm(f):
+    bsz = adj.size(0)
+    n = adj.size(1)
+    rowsum = torch.sum(f, dim=2)
+    r_inv = torch.reciprocal(rowsum)
+    r_inv[torch.isinf(r_inv)] = 0.
+    r_inv[torch.isnan(r_inv)] = 0.
+    r_mat_inv = r_inv.repeat(1,1,n).mul(torch.eye(n).repeat(bsz,1,1))
+    f = r_mat_inv.bmm(f)
     return f
 
 def cal_accuracy(output, y_val, val_mask):

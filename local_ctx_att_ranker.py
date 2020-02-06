@@ -65,13 +65,19 @@ class LocalCtxAttRanker(AbstractWordEntity):
         # att
         ent_tok_att_scores = torch.bmm(entity_vecs * self.att_mat_diag, tok_vecs.permute(0, 2, 1))
         ent_tok_att_scores = (ent_tok_att_scores * tok_mask).add_((tok_mask - 1).mul_(1e10))
+        # ent_tok_att_scores: n_ment * n_cand * ctxlen
         tok_att_scores, _ = torch.max(ent_tok_att_scores, dim=1)
+        # ent_tok_att_scores: n_ment * ctxlen
         top_tok_att_scores, top_tok_att_ids = torch.topk(tok_att_scores, dim=1, k=min(self.tok_top_n, n_words))
+        # top_tok_att_scores: n_ment * k
+        # top_tok_att_ids: n_ment * k
         att_probs = F.softmax(top_tok_att_scores, dim=1).view(batchsize, -1, 1)
+        # att_probs: n_ment * k * 1
         att_probs = att_probs / torch.sum(att_probs, dim=1, keepdim=True)
 
         selected_tok_vecs = torch.gather(tok_vecs, dim=1,
                                          index=top_tok_att_ids.view(batchsize, -1, 1).repeat(1, 1, tok_vecs.size(2)))
+        # selected_tok_vecs: n_ment * k * dim
         ctx_vecs = torch.sum((selected_tok_vecs * self.tok_score_mat_diag) * att_probs, dim=1, keepdim=True)
         ctx_vecs = self.local_ctx_dr(ctx_vecs)
         ent_ctx_scores = torch.bmm(entity_vecs, ctx_vecs.permute(0, 2, 1)).view(batchsize, n_entities)

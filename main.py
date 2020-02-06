@@ -54,6 +54,8 @@ parser.add_argument("--dropout_GCN", type=float,
                     default=0.2)
 parser.add_argument('--gamma', type=float, default=0.9, metavar='G',
                     help='discount factor (default: 0.99)')
+parser.add_argument('--n_sample', type=int, default=10, metavar='G',
+                    help='how many nega-sample will be picked for every mention')
 # parser.add_argument("--order_learning", type=str2bool, nargs='?', default='n', const=True,
 #                     help="Activate order learning mode.")
 # parser.add_argument("--use_local_only", type=str2bool, nargs='?', default='n', const=True,
@@ -213,6 +215,7 @@ if __name__ == "__main__":
               'seq_len': args.seq_len,
               # 'isDynamic' : args.isDynamic,
               'one_entity_once': args.one_entity_once,
+              'n_sample': arg.n_sample,
               'args': args}
 
     # pprint(config)
@@ -220,13 +223,13 @@ if __name__ == "__main__":
 
     dev_datasets = [
                     # ('aida-train', conll.train),
-                    ('aida-A', conll.testA),
-                    ('aida-B', conll.testB),
-                    ('msnbc', conll.msnbc),
-                    ('aquaint', conll.aquaint),
-                    ('ace2004', conll.ace2004),
-                    ('clueweb', conll.clueweb),
-                    ('wikipedia', conll.wikipedia)
+                    ('aida-A', conll.testA, conll.testA_mlist, conll.testA_madj),
+                    ('aida-B', conll.testB, conll.testB_mlist, conll.testB_madj),
+                    ('msnbc', conll.msnbc, conll.msnbc_mlist, conll.msnbc_madj),
+                    ('aquaint', conll.aquaint, conll.aquaint_mlist, conll.aquaint_madj),
+                    ('ace2004', conll.ace2004, conll.ace2004_mlist, conll.ace2004_madj),
+                    ('clueweb', conll.clueweb, conll.clueweb_mlist, conll.clueweb_madj),
+                    ('wikipedia', conll.wikipedia, conll.wikipedia_mlist, conll.wikipedia_madj) 
                 ]
 
     with open(F1_CSV_Path, 'w') as f_csv_f1:
@@ -237,7 +240,7 @@ if __name__ == "__main__":
         print('training...')
         config = {'lr': args.learning_rate, 'n_epochs': args.n_epochs, 'use_early_stop' : args.use_early_stop}
         # pprint(config)
-        ranker.train(conll.train, dev_datasets, config)
+        ranker.train((conll.train, conll.train_mlist, conll.train_madj), dev_datasets, config)
 
     elif args.mode == 'eval':
         org_dev_datasets = dev_datasets  # + [('aida-train', conll.train)]
