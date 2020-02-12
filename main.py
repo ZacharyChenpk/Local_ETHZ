@@ -249,7 +249,7 @@ if __name__ == "__main__":
             dev_datasets.append((dname, ranker.get_data_items(data, predict=True)))
             print(dname, '#dev docs', len(dev_datasets[-1][1]))
 
-        for di, (dname, data) in enumerate(dev_datasets):
-            predictions = ranker.predict(data)
+        for di, (dname, data, mlist, madj) in enumerate(dev_datasets):
+            predictions = ranker.predict(data, mlist, madj)
             print(dname, utils.tokgreen('micro F1: ' + str(D.eval(org_dev_datasets[di][1], predictions))))
 

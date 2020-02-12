@@ -40,6 +40,10 @@ class EDRanker:
         self.seq_len = config['seq_len']
         self.ent_inlinks = config['entity_inlinks']
         self.n_sample = config['n_sample']
+        self.search_ment_size = config['search_ment_size']
+        self.search_entity_size = config['search_entity_size']
+        self.predict_epoches = config['predict_epoches']
+        self.death_epoches = config['death_epoches']
 
         self.word_vocab = config['word_voca']
         self.ent_vocab = config['entity_voca']
@@ -357,8 +361,8 @@ class EDRanker:
         print('#train docs', len(train_dataset))
         self.init_lr = config['lr']
         dev_datasets = []
-        for dname, data, _, _ in org_dev_datasets:
-            dev_datasets.append((dname, self.get_data_items(data, predict=True, isTrain=False)))
+        for dname, data, mlist, madj in org_dev_datasets:
+            dev_datasets.append((dname, self.get_data_items(data, predict=True, isTrain=False), mlist, madj))
             print(dname, '#dev docs', len(dev_datasets[-1][1]))
 
         print('creating optimizer')
@@ -452,6 +456,7 @@ class EDRanker:
                     e_cand_to_idxs = [[] for _ in range(n_ment) ]
                     e_idx_to_cands = [[] for _ in range(n_ment) ]
                     e_adjs = [[] for _ in range(n_ment) ]
+                    sele_cand = [m['selected_cands']['cands'] for m in batch]
                     for i in range(n_ment):
                         for j in range(self.n_sample):
                             if i in self.negsam_graph_cache and sample_idx[i][j] in self.negsam_graph_cache[i]:
@@ -461,7 +466,6 @@ class EDRanker:
                                 e_adjs[i].append(e_adj)
                             else:
                                 true_cands = copy.deepcopy(self.true_cands[dc])
-                                sele_cand = [m['selected_cands']['cands'] for m in batch]
                                 true_cands[i] = sele_cand[i][sample_idx[i][j]]
                                 cand_to_idx, idx_to_cand, e_adj = self.e_graph_build(true_cands)
                                 if i not in self.negsam_graph_cache:
@@ -473,7 +477,7 @@ class EDRanker:
 
                     # e_adjs = torch.LongTensor(e_adjs)
                     # e_adjs: n_ment * n_sample * n_entity * n_entity
-                    gold_e = (gold_cand_to_idxs[dc], gold_idx_to_cand[dc], gold_e_adjs[dc])
+                    # gold_e = (gold_cand_to_idxs[dc], gold_idx_to_cand[dc], gold_e_adjs[dc])
                     e_cand_to_idxs.append(gold_cand_to_idxs[dc])
                     e_idx_to_cands.append(gold_idx_to_cand[dc])
                     e_adjs.append(gold_e_adjs[dc])
@@ -483,7 +487,7 @@ class EDRanker:
                     # new_node_mask: n_ment * (n_sample+1) * n_node
                     nega_e = (new_adjs, new_node_cands, new_node_mask)
 
-                    scores, _ = self.model.forward(token_ids, token_mask, entity_ids, copy_entity_mask, p_e_m, mtype, etype, ment_ids, ment_mask, desc_ids, desc_mask, train_mlist[dc], train_madj[dc], gold_e, nega_e, sample_idx, gold=true_pos.view(-1, 1), method=self.args.method, isTrain=True)
+                    scores, _ = self.model.forward(token_ids, token_mask, entity_ids, copy_entity_mask, p_e_m, mtype, etype, ment_ids, ment_mask, desc_ids, desc_mask, train_mlist[dc], train_madj[dc], nega_e, sample_idx, gold=true_pos.view(-1, 1), method=self.args.method, isTrain=True)
 
                     # if order_learning:
                     #     _, targets = self.model.get_order_truth()
@@ -581,13 +585,13 @@ class EDRanker:
                     rl_acc_threshold += 0.02
                 temp_rlt = []
                 #self.records[e] = dict()
-                for di, (dname, data) in enumerate(dev_datasets):
+                for di, (dname, data, mlist, madj) in enumerate(dev_datasets):
                     if dname == 'aida-B':
                         self.rt_flag = True
                     else:
                         self.rt_flag = False
                     # predictions = self.predict(data, config['isDynamic'], order_learning)
-                    predictions = self.predict(data)
+                    predictions = self.predict(data, mlist, madj)
                     #self.records[e][dname] = self.record
                     f1 = D.eval(org_dev_datasets[di][1], predictions)
 
@@ -678,12 +682,31 @@ class EDRanker:
                 runtime_csv_writer.writerow([cands, ti])
             runtime_csv.close()
 
+    # def beam_expand(self, beams, tree_width, entity_mask):
+    #     n_ment, n_cand = entity_mask.size()
+    #     beam_size = beams.size(0)
+    #     beam_tree = torch.LongTensor(torch.zeros(beam_size * tree_width, n_ment))
+    #     for i in range(beam_size):
+    #         for j in range(tree_width):
+    #             change_which_ment = random.randint(0, n_ment)
+    #             tmp = entity_mask[change_which_ment][beam[i][change_which_ment]]
+    #             entity_mask[change_which_ment][beam[i][change_which_ment]] = 0
+    #             sample_idx = torch.multinomial(entity_mask[change_which_ment], 1, replacement=True)
+    #             entity_mask[change_which_ment][beam[i][change_which_ment]] = tmp
+    #             beam_tree[i*tree_width+j]=beams[i].clone()
+    #             beam_tree[i*tree_width+j][change_which_ment] = sample_idx
+    #     return beam_tree
+
     # def predict(self, data, dynamic_option, order_learning):
-    def predict(self, data):
+    def predict(self, data, mlist, madj):
+        search_ment_size = self.search_ment_size
+        search_entity_size = self.search_entity_size
+        predict_epoches = self.predict_epoches
+        death_epoches = self.death_epoches
         predictions = {items[0]['doc_name']: [] for items in data}
         self.model.eval()
         #self.record = []
-        for batch in data:  # each document is a minibatch, is a list of mentions
+        for dc, batch in enumerate(data):  # each document is a minibatch, is a list of mentions
             start_time = time.time()
             token_ids = [m['context'][0] + m['context'][1]
                          if len(m['context'][0]) + len(m['context'][1]) > 0
@@ -715,17 +738,81 @@ class EDRanker:
             mtype = Variable(torch.FloatTensor([m['mtype'] for m in batch]).cuda())
             etype = Variable(torch.FloatTensor([m['selected_cands']['etype'] for m in batch]).cuda())
 
-            # scores, actions = self.model.forward(token_ids, token_mask, entity_ids, entity_mask, p_e_m, mtype, etype,
-            #                                      ment_ids, ment_mask, desc_ids, desc_mask, gold=true_pos.view(-1, 1),
-            #                                      method=self.args.method,
-            #                                      isTrain=False, isDynamic=dynamic_option,
-            #                                      isOrderLearning=order_learning,
-            #                                      isOrderFixed=True, isSort=self.args.sort)
-            scores, actions = self.model.forward(token_ids, token_mask, entity_ids, entity_mask, p_e_m, mtype, etype, ment_ids, ment_mask, desc_ids, desc_mask, gold=true_pos.view(-1, 1), method=self.args.method, isTrain=False)
+            n_ments, n_cands = entity_ids.size()
+            # the val in cur_cand_idxs should be in 0~n_cand
+            cur_cand_idxs = torch.multinomial(entity_mask, 1, replacement=False).squeeze(1)
 
-            scores = scores.cpu().data.numpy()
+            death_cnt = 0
+            for _ in range(predict_epoches):
+                cur_cands = torch.gather(entity_ids, 1, cur_cand_idxs.unsqueeze(1))
+                # cur_cands: n_ment * 1
+                cand_to_idx, idx_to_cand, e_adj = self.e_graph_build(self, cur_cands)
+                nega_e = (cand_to_idx, idx_to_cand, e_adj)
+                cur_scores, _ = self.model.forward(token_ids, token_mask, entity_ids, entity_mask, p_e_m, mtype, etype, ment_ids, ment_mask, desc_ids, desc_mask, mlist[dc], madj[dc], nega_e, cur_cand_idxs, gold=None, method="SL", isTrain=False, chosen_ment=False)
+                assert cur_scores.size(0) == n_ments
 
-            pred_ids = np.argmax(scores, axis=1)
+                small_scores, small_idxs = torch.topk(cur_scores, min(search_ment_size, n_ments), largest=False, sorted=True)
+
+                random_new_cand_idx = torch.cat(cur_cand_idxs, torch.multinomial(entity_mask[small_idxs], min(n_cands, search_entity_size)-1, replacement=False), dim=1)
+                # small_scores: search_ment_size
+                # random_new_cand_idx: search_ment_size * search_entity_size, value in 0~n_cands
+
+                for i in range(min(search_ment_size, n_ments)):
+                    for j in range(min(n_cands, search_entity_size)):
+                        true_cands = copy.deepcopy(cur_cands)
+                        which_ment = small_idxs[i]
+                        true_cands[which_ment] = entity_ids[i][random_new_cand_idx[i][j]]
+                        cand_to_idx, idx_to_cand, e_adj = self.e_graph_build(true_cands)
+                        e_cand_to_idxs[i].append(cand_to_idx)
+                        e_idx_to_cands[i].append(idx_to_cand)
+                        e_adjs[i].append(e_adj)
+                new_adjs, new_node_cands, new_node_mask = utils.e_graph_batch_padding(e_cand_to_idxs, e_idx_to_cands, e_adjs, n_ment, n_sample)
+                nega_e = (new_adjs, new_node_cands, new_node_mask)
+
+                new_scores, _ = self.model.forward(token_ids, token_mask, entity_ids, entity_mask, p_e_m, mtype, etype, ment_ids, ment_mask, desc_ids, desc_mask, mlist[dc], madj[dc], nega_e, random_new_cand_idx, gold=None, method="SL", isTrain=False, chosen_ment=small_idxs)
+                # new_scores: search_ment_size * search_entity_size
+
+                big_idxs_in_new = torch.argmax(new_scores, dim=1)
+                big_idxs = random_new_cand_idx[big_idxs_in_new]
+
+                if max(new_scores[big_idxs_in_new]) <= 0:
+                    death_cnt = death_cnt + 1
+                    if death_cnt > death_epoches:
+                        break
+                else:
+                    cur_cand_idxs[small_idxs] = big_idxs
+                    death_cnt = 0
+
+                # beam_tree = self.beam_expand(beams, tree_width, entity_mask)
+
+                # e_cand_to_idxs = [[] for _ in range(n_ment) ]
+                # e_idx_to_cands = [[] for _ in range(n_ment) ]
+                # e_adjs = [[] for _ in range(n_ment) ]
+
+                # for i in range(beam_size * tree_width):
+                #     cand_to_idx, idx_to_cand, e_adj = self.e_graph_build(beam_tree[i])
+                #     e_cand_to_idxs[i].append(cand_to_idx)
+                #     e_idx_to_cands[i].append(idx_to_cand)
+                #     e_adjs[i].append(e_adj)
+                # for i in range(beam_size):
+                #     cand_to_idx, idx_to_cand, e_adj = self.e_graph_build(beams[i])
+                #     e_cand_to_idxs[i].append(cand_to_idx)
+                #     e_idx_to_cands[i].append(idx_to_cand)
+                #     e_adjs[i].append(e_adj)
+
+                # # e_adjs: (beam_size*tree_width + beam_size) * n_entity * n_entity
+                # new_adjs, new_node_cands, new_node_mask = utils.e_graph_batch_padding(e_cand_to_idxs, e_idx_to_cands, e_adjs, n_ment, n_sample)
+                # # new_adjs: (beam_size*tree_width + beam_size) * n_node * n_node
+                # # new_node_cands: (beam_size*tree_width + beam_size) * n_node
+                # # new_node_mask: (beam_size*tree_width + beam_size) * n_node
+                # nega_e = (new_adjs, new_node_cands, new_node_mask)
+
+                # scores, _ = self.model.forward(token_ids, token_mask, entity_ids, entity_mask, p_e_m, mtype, etype, ment_ids, ment_mask, desc_ids, desc_mask, mlist, madj, nega_e, beam_tree, gold=true_pos.view(-1, 1), method=self.args.method, isTrain=False)
+
+                # scores = scores.cpu().data.numpy()
+
+            # pred_ids = np.argmax(scores, axis=1)
+            pred_ids = cur_cand_idxs
             end_time = time.time()
             if self.rt_flag:
                 self.run_time.append([total_candidates, end_time-start_time])

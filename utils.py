@@ -94,14 +94,29 @@ def tokblue(s):
 ################ precessing size-different graph batch #############
 
 def e_graph_batch_padding(e_cand_to_idxs, e_idx_to_cands, e_adjs, n_ment, n_sample, pad_entity_id = 0):
+    # if predicting:
+    #     node_nums = [len(l) for l in e_idx_to_cands]
+    #     max_node_nums = max(node_nums)
+    #     new_node_cands = [l + [pad_entity_id] * (max_node_nums - len(l)) for l in e_idx_to_cands]
+    #     new_node_cands = torch.LongTensor(new_node_cands)
+    #     # new_node_cands: (beam_size*tree_width + beam_size)(==n_sample) * max_node_nums
+    #     assert new_node_cands.size(0) == n_sample
+    #     new_adjs = torch.LongTensor(torch.zeros(n_sample, max_node_nums, max_node_nums))
+    #     new_node_mask = torch.zeros(n_sample, max_node_nums)
+    #     for i in range(n_sample):
+    #         new_adjs[i][0:node_nums[i],0:node_nums[i]] = e_adjs[i]
+    #         new_node_mask[i][0:node_nums[i]] = 1.
+    #     return new_adjs, new_node_cands, new_node_mask
+
+    # else:
     node_nums = [[len(l) for l in idx_to_cand] for idx_to_cand in e_idx_to_cands]
     max_node_nums = max([max(l) for l in node_nums])
     new_node_cands = [[l + [pad_entity_id] * (max_node_nums - len(l)) for l in idx_to_cand] for idx_to_cand in e_idx_to_cands]
     new_node_cands = torch.LongTensor(new_node_cands)
     # new_node_cands: n_ment * (n_sample+1) * max_node_nums
     assert new_node_cands.size(0) == n_ment and new_node_cands.size(1) == n_sample+1
-    new_adjs = torch.LongTensor(torch.zeros((n_ment, n_sample+1, max_node_nums, max_node_nums)))
-    new_node_mask = torch.zeros((n_ment, n_sample+1, max_node_nums))
+    new_adjs = torch.LongTensor(torch.zeros(n_ment, n_sample+1, max_node_nums, max_node_nums))
+    new_node_mask = torch.zeros(n_ment, n_sample+1, max_node_nums)
     for i in range(n_ment):
         for j in range(n_sample+1):
             new_adjs[i][j][0:node_nums[i][j],0:node_nums[i][j]] = e_adjs[i][j]

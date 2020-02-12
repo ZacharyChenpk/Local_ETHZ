@@ -37,6 +37,7 @@ class MulRelRanker(LocalCtxAttRanker):
         self.use_local = config.get('use_local', False)
         # self.use_local_only = config.get('use_local_only', False)
         self.freeze_local = config.get('freeze_local', False)
+        self.emb_dims = config['emb_dims']
 
         # self.entity2entity_mat_diag = torch.nn.Parameter(torch.ones(self.emb_dims))
         # self.entity2entity_score_mat_diag = torch.nn.Parameter(torch.ones(self.emb_dims))
@@ -70,6 +71,7 @@ class MulRelRanker(LocalCtxAttRanker):
 
         # Typing feature
         self.type_emb = torch.nn.Parameter(torch.randn([4, 5]))
+        self.gcned_mat_diag = nn.Parameter(torch.randn(self.emb_dims))
         self.score_combine = torch.nn.Sequential(
                 torch.nn.Linear(4, self.hid_dims),
                 torch.nn.ReLU(),
@@ -77,6 +79,7 @@ class MulRelRanker(LocalCtxAttRanker):
                 torch.nn.Linear(self.hid_dims, 1))
 
         self.flag = 0
+        self.doc_predict_restore = False
         # print('---------------- model config -----------------')
         # for k, v in self.__dict__.items():
         #     if not hasattr(v, '__dict__'):
@@ -87,9 +90,40 @@ class MulRelRanker(LocalCtxAttRanker):
         # graph_embs: n_node * emb_dim
         return torch.mean(graph_embs, dim=0)
 
+    def compute_gcned_similarity(self, entity_embs, ment_embs, isTrain=True):
+        if isTrain:
+            # entity_embs: n_ment * (n_sample+1) * n_node * emb_dim
+            # ment_embs: n_ment * emb_dim
+            # try to return: n_ment * (n_sample+1)
+            n_ment, n_sample, n_node, _ = entity_embs.size()
+            assert entity_embs.size(3) == self.emb_dims
+            n_sample = n_sample - 1
+
+            msk = torch.zeros(n_ment, n_node)
+            msk[:n_ment, :n_ment] = torch.eye(n_ment)
+            msk = msk.unsqueeze(1).unsqueeze(3).repeat(1, n_sample+1, 1, self.emb_dims)
+            entity_embs2 = entity_embs2.mul(msk).sum(dim=2)
+            # entity_embs2: n_ment * (n_sample+1) * emb_dim
+            sim_scores = torch.bmm(entity_embs2 * self.gcned_mat_diag, ment_embs.unsqueeze(2))
+            # sim_scores: n_ment * (n_sample+1) * 1
+            return sim_scores.squeeze(2)
+
+        else:
+            # entity_embs: search_ment_size * search_entity_size * n_node * emb_dim
+            # ment_embs: n_ment * emb_dim
+            # try to return: search_ment_size * search_entity_size * n_ment
+            search_ment_size, search_entity_size, n_node, _ = entity_embs.size()
+            n_ment = ment_embs.size(0)
+            assert entity_embs.size(3) == self.emb_dims
+            assert ment_embs.size(1) == self.emb_dims
+            e_embs = entity_embs[:,:,:n_ment,:].view(-1, self.emb_dims)
+            # e_embs: (search_ment_size * search_entity_size * n_ment) * emb_dim
+            sim_scores = (e_embs * self.gcned_mat_diag).mm(ment_embs.t())
+            return sim_scores.view(search_ment_size, search_entity_size, n_ment)
+
     # def forward(self, token_ids, tok_mask, entity_ids, entity_mask, p_e_m, mtype, etype, ment_ids, ment_mask, desc_ids, desc_mask, gold=None,
     #             method="SL", isTrain=True, isDynamic=0, isOrderLearning=False, isOrderFixed=False, isSort='topic', basemodel='deeped'):
-    def forward(self, token_ids, tok_mask, entity_ids, entity_mask, p_e_m, mtype, etype, ment_ids, ment_mask, desc_ids, desc_mask, m_graph_list, m_graph_adj, gold_e, nega_e, sample_idx, gold=None, method="SL", isTrain=True, basemodel='deeped'):
+    def forward(self, token_ids, tok_mask, entity_ids, entity_mask, p_e_m, mtype, etype, ment_ids, ment_mask, desc_ids, desc_mask, m_graph_list, m_graph_adj, nega_e, sample_idx, gold=None, method="SL", isTrain=True, chosen_ment=False):
 
         n_ments, n_cands = entity_ids.size()
 
@@ -101,82 +135,142 @@ class MulRelRanker(LocalCtxAttRanker):
         desc_ids = desc_ids.view(n_ments*n_cands, -1)
         desc_mask = desc_mask.view(n_ments*n_cands, 1, -1)
 
-        context_emb = self.word_embeddings(token_ids)
-        desc_emb = self.word_embeddings(desc_ids)
+        if isTrain or (self.doc_predict_restore == False):
+            context_emb = self.word_embeddings(token_ids)
+            desc_emb = self.word_embeddings(desc_ids)
 
-        # context_cnn: n_ment * 1 * 64
-        context_cnn = F.max_pool1d(self.cnn(context_emb.permute(0, 2, 1)), context_len-2).permute(0, 2, 1)
+            # context_cnn: n_ment * 1 * 64
+            context_cnn = F.max_pool1d(self.cnn(context_emb.permute(0, 2, 1)), context_len-2).permute(0, 2, 1)
 
-        # desc_cnn: n_ment * n_cand * 64
-        desc_cnn = F.max_pool1d(self.cnn(desc_emb.permute(0, 2, 1))-(1-desc_mask.float())*1e10, desc_len-2).view(n_ments, n_cands, -1)
+            # desc_cnn: n_ment * n_cands * 64
+            desc_cnn = F.max_pool1d(self.cnn(desc_emb.permute(0, 2, 1))-(1-desc_mask.float())*1e10, desc_len-2).view(n_ments, n_cands, -1)
 
-        sim = torch.sum(context_cnn*desc_cnn,-1) / torch.sqrt(torch.sum(context_cnn*context_cnn, -1)) / torch.sqrt(torch.sum(desc_cnn*desc_cnn, -1))
+            sim = torch.sum(context_cnn*desc_cnn,-1) / torch.sqrt(torch.sum(context_cnn*context_cnn, -1)) / torch.sqrt(torch.sum(desc_cnn*desc_cnn, -1))
 
-        # if not self.oracle:
-        #     gold = None
+            # if not self.oracle:
+            #     gold = None
 
-        # Typing feature
-        self.mt_emb = torch.matmul(mtype, self.type_emb).view(n_ments, 1, -1)
-        self.et_emb = torch.matmul(etype.view(-1, 4), self.type_emb).view(n_ments, n_cands, -1)
-        tm = torch.sum(self.mt_emb*self.et_emb, -1, True)
-
-        if self.use_local:
-            local_ent_scores = super(MulRelRanker, self).forward(token_ids, tok_mask, entity_ids, entity_mask,p_e_m=None)
-        else:
-            local_ent_scores = Variable(torch.zeros(n_ments, n_cands).cuda(), requires_grad=False)
-
-        # gold_e_adjs: n_ment * n_entity * n_entity
-        gold_cand_to_idxs, gold_idx_to_cand, gold_e_adjs = gold_e
-        nega_adjs, nega_node_cands, nega_node_mask = nega_e
-        # nega_adjs: n_ment * (n_sample+1) * n_node * n_node
-        # nega_node_cands: n_ment * (n_sample+1) * n_node
-        # nega_node_mask: n_ment * (n_sample+1) * n_node
-
-        # ment_emb: n_ment * emb_dim (only one graph)
-        ment_emb = F.cnn_mgraph(self.cnn(context_emb.permute(0, 2, 1)), context_len-2).squeeze(2)
-        # nega_entity_emb: n_ment * (n_sample+1) * n_node * emb_dim
-        nega_entity_emb = self.entity_embeddings(nega_node_cands)
-
-        ment_emb_r = gcnutil.feature_norm(ment_emb)
-        nega_entity_emb_r = gcnutil.batch_feature_norm(nega_entity_emb)
-        ment_emb_2 = self.gcn(ment_emb_r, m_graph_adj)
-        nega_entity_emb_2 = self.gcn.batch_forward(nega_entity_emb_r, nega_adjs)
-
-        n_ment = ment_emb.size(0)
-        n_sample = nega_adjs.size(1) - 1
-
-        mention_graph_emb = torch.mean(ment_emb_2, dim=0)
-        nega_node_mask2 = nega_node_mask.repeat(1,1,1,self.emb_dims)
-        nega_graph_embs = torch.sum(nega_entity_emb_2.mul(nega_node_mask2), dim=2)
-        nega_node_mask2 = torch.sum(nega_node_mask2, dim=2)
-        nega_graph_embs = torch.div(nega_graph_embs, nega_node_mask2)
-
-        mention_graph_emb = mention_graph_emb.unsqueeze(0).unsqueeze(0).repeat(n_ment * n_sample+1, 1)
-        n_input = n_ment * (n_sample+1)
-        nega_graph_embs = nega_graph_embs.view(n_input, self.emb_dims)
-        graph_scores = self.m_e_score(torch.cat([mention_graph_emb, nega_graph_embs], dim=1))
-
-        # graph_scores: n_ment * (n_sample+1)
-        # gold: n_ment
-        # sample_idx: n_ment * n_sample
-
-        sample_idx = torch.cat([sample_idx, gold.unsqueeze(1)], dim=1)
-        local_ent_scores = local_ent_scores.view(n_ments, n_cands)
-        p_e_m = torch.log(p_e_m + 1e-20).view(n_ments, n_cands)
-        tm = tm.view(n_ments, n_cands)
-        # sample_local_ent_scores = torch.zeros(n_ment, n_sample+1).scatter_(1, sample_idx, local_ent_scores)
-        # sample_p_e_m = torch.zeros(n_ment, n_sample+1).scatter_(1, sample_idx, p_e_m)
-        # sample_tm = torch.zeros(n_ment, n_sample+1).scatter_(1, sample_idx, tm)
-        sample_local_ent_scores = torch.gather(local_ent_scores, 1, sample_idx)
-        sample_p_e_m = torch.gather(p_e_m, 1, sample_idx)
-        sample_tm = torch.gather(tm, 1, sample_idx)
-        assert sample_local_ent_scores.size() == (n_ment, n_sample+1)
-        assert sample_p_e_m.size() == (n_ment, n_sample+1)
-        assert sample_tm.size() == (n_ment, n_sample+1)
-
-        #if self.use_local_only:
             # Typing feature
-        inputs = torch.cat([sample_local_ent_scores.view(n_input, -1), sample_p_e_m.view(n_input, -1), sample_tm.view(n_input, -1), graph_scores.view(n_input, -1)], dim=1)
+            self.mt_emb = torch.matmul(mtype, self.type_emb).view(n_ments, 1, -1)
+            self.et_emb = torch.matmul(etype.view(-1, 4), self.type_emb).view(n_ments, n_cands, -1)
+            tm = torch.sum(self.mt_emb*self.et_emb, -1, True)
+
+            if self.use_local:
+                local_ent_scores = super(MulRelRanker, self).forward(token_ids, tok_mask, entity_ids, entity_mask,p_e_m=None)
+            else:
+                local_ent_scores = Variable(torch.zeros(n_ments, n_cands).cuda(), requires_grad=False)
+            # ment_emb: n_ment * emb_dim (only one graph)
+            ment_emb = F.cnn_mgraph(self.cnn(context_emb.permute(0, 2, 1)), context_len-2).squeeze(2)
+
+            local_ent_scores = local_ent_scores.view(n_ments, n_cands)
+            p_e_m = torch.log(p_e_m + 1e-20).view(n_ments, n_cands)
+            tm = tm.view(n_ments, n_cands)
+
+            if not isTrain:
+                self.doc_predict_restore = (local_ent_scores, tm, ment_emb)
+        else:
+            local_ent_scores, tm, ment_emb = self.doc_predict_restore
+
+        nega_adjs, nega_node_cands, nega_node_mask = nega_e
+        
+        if isTrain or chosen_ment:
+
+            # nega_adjs: n_ment * (n_sample+1) * n_node * n_node
+            # nega_node_cands: n_ment * (n_sample+1) * n_node
+            # nega_node_mask: n_ment * (n_sample+1) * n_node
+            # nega_entity_emb: n_ment * (n_sample+1) * n_node * emb_dim
+            nega_entity_emb = self.entity_embeddings(nega_node_cands)
+
+            ment_emb_r = gcnutil.feature_norm(ment_emb)
+            nega_entity_emb_r = gcnutil.batch_feature_norm(nega_entity_emb)
+            ment_emb_2 = self.gcn(ment_emb_r, m_graph_adj)
+            nega_entity_emb_2 = self.gcn.batch_forward(nega_entity_emb_r, nega_adjs)
+
+            n_sample = nega_adjs.size(1) - 1
+
+            # mention_graph_emb: emb_dim
+            mention_graph_emb = torch.mean(ment_emb_2, dim=0)
+            nega_node_mask2 = nega_node_mask.unsqueeze(3).repeat(1,1,1,self.emb_dims)
+            nega_graph_embs = torch.sum(nega_entity_emb_2.mul(nega_node_mask2), dim=2)
+            nega_node_mask2 = torch.sum(nega_node_mask2, dim=2)
+            # nega_graph_embs = n_ment * (n_sample+1) * emb_dim
+            # nega_entity_emb_2: n_ment * (n_sample+1) * n_node * emb_dim
+            nega_graph_embs = torch.div(nega_graph_embs, nega_node_mask2)
+
+            n_input = n_ments * (n_sample+1)
+            mention_graph_emb = mention_graph_emb.unsqueeze(0).repeat(n_input, 1)
+            nega_graph_embs = nega_graph_embs.view(n_input, self.emb_dims)
+            # graph_scores: n_ment * (n_sample+1)
+            graph_scores = self.m_e_score(torch.cat([mention_graph_emb, nega_graph_embs], dim=1))
+
+            if isTrain:
+                # gold: n_ment
+                # sample_idx: n_ment * n_sample
+                sample_idx = torch.cat([sample_idx, gold.unsqueeze(1)], dim=1)
+
+                sample_local_ent_scores = torch.gather(local_ent_scores, 1, sample_idx)
+                sample_p_e_m = torch.gather(p_e_m, 1, sample_idx)
+                sample_tm = torch.gather(tm, 1, sample_idx)
+                sample_gcnscore = self.compute_gcned_similarity(nega_entity_emb_2, ment_emb_2)
+                assert sample_local_ent_scores.size() == (n_ments, n_sample+1)
+                assert sample_p_e_m.size() == (n_ments, n_sample+1)
+                assert sample_tm.size() == (n_ments, n_sample+1)
+                assert sample_gcnscore.size() == (n_ments, n_sample+1)
+
+            else:
+                # choosing the next-step graph entities while predicting
+                #   n_ment == search_ment_size
+                #   n_sample+1 == search_entity_size
+                n_ments = nega_graph_embs.size(0)
+                n_input = n_ments * (n_sample+1)
+
+                # chosen_ment: LongTensor(search_ment_size)
+                # sample_idx: search_ment_size * search_entity_size
+                sample_local_ent_scores = torch.gather(local_ent_scores[chosen_ment], 1, sample_idx)
+                sample_p_e_m = torch.gather(p_e_m[chosen_ment], 1, sample_idx)
+                sample_tm = torch.gather(tm[chosen_ment], 1, sample_idx)
+                sample_gcnscore = self.compute_gcned_similarity(nega_entity_emb_2, ment_emb_2, isTrain=False)[:,:,chosen_ment]
+                # sample_gcnscore: search_ment_size * search_entity_size * search_ment_size
+                msk = torch.eye(search_ment_size).unsuqeeze(1).repeat(1,search_entity_size,1)
+                sample_gcnscore = torch.sum(sample_gcnscore * msk, dim=2)
+
+            #if self.use_local_only:
+                # Typing feature
+            inputs = torch.cat([sample_local_ent_scores.view(n_input, -1), sample_p_e_m.view(n_input, -1), sample_tm.view(n_input, -1), graph_scores.view(n_input, -1), sample_gcnscore.view(n_input, -1)], dim=1)
+
+            scores = self.score_combine(inputs).view(n_ments, n_sample+1)
+
+        else:
+            # calculating scores of all current ment-entity pairs
+            # to choose some entities to be replaced
+            # nega_adjs: n_node * n_node
+            # nega_node_cands: n_node
+            # nega_node_mask: n_node
+            # nega_entity_emb: n_node * emb_dim
+            nega_entity_emb = self.entity_embeddings(nega_node_cands)
+            ment_emb_r = gcnutil.feature_norm(ment_emb)
+            nega_entity_emb_r = gcnutil.feature_norm(nega_entity_emb)
+            ment_emb_2 = self.gcn(ment_emb_r, m_graph_adj)
+            nega_entity_emb_2 = self.gcn(nega_entity_emb_r, nega_adjs)
+
+            mention_graph_emb = torch.mean(ment_emb_2, dim=0)
+            entity_graph_emb = torch.mean(nega_entity_emb_2, dim=0)
+            graph_scores = self.m_e_score(torch.cat([mention_graph_emb, entity_graph_emb], dim=0).unsqueeze(0))
+            graph_scores = graph_scores * torch.ones(n_ments, 1)
+
+            sample_idx = sample_idx.unsqueeze(1)
+
+            sample_local_ent_scores = torch.gather(local_ent_scores, 1, sample_idx)
+            sample_p_e_m = torch.gather(p_e_m, 1, sample_idx)
+            sample_tm = torch.gather(tm, 1, sample_idx)
+
+            entity_emb = nega_entity_emb[:n_ments]
+            # entity_emb: n_ment * emb_dims
+            # ment_emb: n_ment * emb_dims
+            sample_gcnscore = torch.mul(ment_emb*self.gcned_mat_diag, entity_emb).sum(dim=1).unsqueeze(1)
+
+            n_input = n_ments
+            inputs = torch.cat([sample_local_ent_scores, sample_p_e_m, sample_tm, graph_scores, sample_gcnscore], dim=1)
 
         # inputs = torch.cat([local_ent_scores.view(n_ments * n_cands, -1),
         #                     torch.log(p_e_m + 1e-20).view(n_ments * n_cands, -1)], dim=1)
@@ -189,7 +283,7 @@ class MulRelRanker(LocalCtxAttRanker):
         # print("p_e_m",p_e_m.size())
         # print("tm",tm.size())
         # print("self.score_combine",self.score_combine)
-        scores = self.score_combine(inputs).view(n_ments, n_sample+1)
+        
         # assert False
 
         return scores, self.actions
