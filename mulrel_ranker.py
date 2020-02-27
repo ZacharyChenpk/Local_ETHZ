@@ -5,8 +5,9 @@ import numpy as np
 from Local_ETHZ.local_ctx_att_ranker import LocalCtxAttRanker
 from torch.distributions import Categorical
 from Local_ETHZ.gcn.model import GCN
-import Local_ETHZ.gcn.util as gcnutil
+import Local_ETHZ.gcn.utils as gcnutil
 import copy
+import ipdb
 
 np.set_printoptions(threshold=20)
 
@@ -71,9 +72,9 @@ class MulRelRanker(LocalCtxAttRanker):
 
         # Typing feature
         self.type_emb = torch.nn.Parameter(torch.randn([4, 5]))
-        self.gcned_mat_diag = nn.Parameter(torch.randn(self.emb_dims))
+        self.gcned_mat_diag = torch.nn.Parameter(torch.randn(self.emb_dims))
         self.score_combine = torch.nn.Sequential(
-                torch.nn.Linear(4, self.hid_dims),
+                torch.nn.Linear(5, self.hid_dims),
                 torch.nn.ReLU(),
                 torch.nn.Dropout(p=self.dr),
                 torch.nn.Linear(self.hid_dims, 1))
@@ -99,10 +100,10 @@ class MulRelRanker(LocalCtxAttRanker):
             assert entity_embs.size(3) == self.emb_dims
             n_sample = n_sample - 1
 
-            msk = torch.zeros(n_ment, n_node)
+            msk = torch.zeros(n_ment, n_node).cuda()
             msk[:n_ment, :n_ment] = torch.eye(n_ment)
             msk = msk.unsqueeze(1).unsqueeze(3).repeat(1, n_sample+1, 1, self.emb_dims)
-            entity_embs2 = entity_embs2.mul(msk).sum(dim=2)
+            entity_embs2 = entity_embs.mul(msk).sum(dim=2)
             # entity_embs2: n_ment * (n_sample+1) * emb_dim
             sim_scores = torch.bmm(entity_embs2 * self.gcned_mat_diag, ment_embs.unsqueeze(2))
             # sim_scores: n_ment * (n_sample+1) * 1
@@ -116,9 +117,9 @@ class MulRelRanker(LocalCtxAttRanker):
             n_ment = ment_embs.size(0)
             assert entity_embs.size(3) == self.emb_dims
             assert ment_embs.size(1) == self.emb_dims
-            e_embs = entity_embs[:,:,:n_ment,:].view(-1, self.emb_dims)
-            # e_embs: (search_ment_size * search_entity_size * n_ment) * emb_dim
-            sim_scores = (e_embs * self.gcned_mat_diag).mm(ment_embs.t())
+            e_embs = entity_embs[:,:,:n_ment,:].reshape(-1, n_ment, self.emb_dims)
+            # e_embs: (search_ment_size * search_entity_size) * n_ment * emb_dim
+            sim_scores = (e_embs * self.gcned_mat_diag).mul(ment_embs).sum(dim=2)
             return sim_scores.view(search_ment_size, search_entity_size, n_ment)
 
     # def forward(self, token_ids, tok_mask, entity_ids, entity_mask, p_e_m, mtype, etype, ment_ids, ment_mask, desc_ids, desc_mask, gold=None,
@@ -160,20 +161,20 @@ class MulRelRanker(LocalCtxAttRanker):
             else:
                 local_ent_scores = Variable(torch.zeros(n_ments, n_cands).cuda(), requires_grad=False)
             # ment_emb: n_ment * emb_dim (only one graph)
-            ment_emb = F.cnn_mgraph(self.cnn(context_emb.permute(0, 2, 1)), context_len-2).squeeze(2)
+            ment_emb = F.max_pool1d(self.cnn_mgraph(context_emb.permute(0, 2, 1)), context_len-4).squeeze(2)
 
             local_ent_scores = local_ent_scores.view(n_ments, n_cands)
             p_e_m = torch.log(p_e_m + 1e-20).view(n_ments, n_cands)
             tm = tm.view(n_ments, n_cands)
 
-            if not isTrain:
-                self.doc_predict_restore = (local_ent_scores, tm, ment_emb)
+#             if not isTrain:
+#                 self.doc_predict_restore = (local_ent_scores, tm, ment_emb)
         else:
             local_ent_scores, tm, ment_emb = self.doc_predict_restore
 
         nega_adjs, nega_node_cands, nega_node_mask = nega_e
         
-        if isTrain or chosen_ment:
+        if isTrain or type(chosen_ment) != bool:
 
             # nega_adjs: n_ment * (n_sample+1) * n_node * n_node
             # nega_node_cands: n_ment * (n_sample+1) * n_node
@@ -181,10 +182,11 @@ class MulRelRanker(LocalCtxAttRanker):
             # nega_entity_emb: n_ment * (n_sample+1) * n_node * emb_dim
             nega_entity_emb = self.entity_embeddings(nega_node_cands)
 
+            aaa, bbb, n_node, emb_dim = nega_entity_emb.size()
             ment_emb_r = gcnutil.feature_norm(ment_emb)
-            nega_entity_emb_r = gcnutil.batch_feature_norm(nega_entity_emb)
-            ment_emb_2 = self.gcn(ment_emb_r, m_graph_adj)
-            nega_entity_emb_2 = self.gcn.batch_forward(nega_entity_emb_r, nega_adjs)
+            nega_entity_emb_r = gcnutil.batch_feature_norm(nega_entity_emb.view(-1, n_node, emb_dim)).view(aaa, bbb, n_node, emb_dim)
+            ment_emb_2 = self.gcn(ment_emb_r, m_graph_adj.long())
+            nega_entity_emb_2 = self.gcn.batch_forward(nega_entity_emb_r.view(-1, n_node, emb_dim), nega_adjs.view(-1, n_node, n_node)).view(aaa, bbb, n_node, emb_dim)
 
             n_sample = nega_adjs.size(1) - 1
 
@@ -197,21 +199,23 @@ class MulRelRanker(LocalCtxAttRanker):
             # nega_entity_emb_2: n_ment * (n_sample+1) * n_node * emb_dim
             nega_graph_embs = torch.div(nega_graph_embs, nega_node_mask2)
 
-            n_input = n_ments * (n_sample+1)
+            n_input = nega_graph_embs.size(0) * (n_sample+1)
             mention_graph_emb = mention_graph_emb.unsqueeze(0).repeat(n_input, 1)
             nega_graph_embs = nega_graph_embs.view(n_input, self.emb_dims)
-            # graph_scores: n_ment * (n_sample+1)
+            # graph_scores: (n_ment * (n_sample+1))
             graph_scores = self.m_e_score(torch.cat([mention_graph_emb, nega_graph_embs], dim=1))
 
             if isTrain:
-                # gold: n_ment
+                # gold: n_ment * 1
                 # sample_idx: n_ment * n_sample
-                sample_idx = torch.cat([sample_idx, gold.unsqueeze(1)], dim=1)
+                sample_idx2 = torch.cat([sample_idx, gold], dim=1)
+                # print("sample_idx2:", sample_idx2)
 
-                sample_local_ent_scores = torch.gather(local_ent_scores, 1, sample_idx)
-                sample_p_e_m = torch.gather(p_e_m, 1, sample_idx)
-                sample_tm = torch.gather(tm, 1, sample_idx)
+                sample_local_ent_scores = torch.gather(local_ent_scores, 1, sample_idx2)
+                sample_p_e_m = torch.gather(p_e_m, 1, sample_idx2)
+                sample_tm = torch.gather(tm, 1, sample_idx2)
                 sample_gcnscore = self.compute_gcned_similarity(nega_entity_emb_2, ment_emb_2)
+                    
                 assert sample_local_ent_scores.size() == (n_ments, n_sample+1)
                 assert sample_p_e_m.size() == (n_ments, n_sample+1)
                 assert sample_tm.size() == (n_ments, n_sample+1)
@@ -221,7 +225,7 @@ class MulRelRanker(LocalCtxAttRanker):
                 # choosing the next-step graph entities while predicting
                 #   n_ment == search_ment_size
                 #   n_sample+1 == search_entity_size
-                n_ments = nega_graph_embs.size(0)
+                n_ments = nega_entity_emb_2.size(0)
                 n_input = n_ments * (n_sample+1)
 
                 # chosen_ment: LongTensor(search_ment_size)
@@ -231,7 +235,9 @@ class MulRelRanker(LocalCtxAttRanker):
                 sample_tm = torch.gather(tm[chosen_ment], 1, sample_idx)
                 sample_gcnscore = self.compute_gcned_similarity(nega_entity_emb_2, ment_emb_2, isTrain=False)[:,:,chosen_ment]
                 # sample_gcnscore: search_ment_size * search_entity_size * search_ment_size
-                msk = torch.eye(search_ment_size).unsuqeeze(1).repeat(1,search_entity_size,1)
+                msk = torch.eye(n_ments).cuda().unsqueeze(1).repeat(1,n_sample+1,1)
+                # print("msk:", msk.size())
+                # print("sample_gcnscore:", sample_gcnscore.size())
                 sample_gcnscore = torch.sum(sample_gcnscore * msk, dim=2)
 
             #if self.use_local_only:
@@ -256,13 +262,13 @@ class MulRelRanker(LocalCtxAttRanker):
             mention_graph_emb = torch.mean(ment_emb_2, dim=0)
             entity_graph_emb = torch.mean(nega_entity_emb_2, dim=0)
             graph_scores = self.m_e_score(torch.cat([mention_graph_emb, entity_graph_emb], dim=0).unsqueeze(0))
-            graph_scores = graph_scores * torch.ones(n_ments, 1)
+            graph_scores = graph_scores * torch.ones(n_ments, 1).cuda()
 
-            sample_idx = sample_idx.unsqueeze(1)
+            sample_idx2 = sample_idx.unsqueeze(1)
 
-            sample_local_ent_scores = torch.gather(local_ent_scores, 1, sample_idx)
-            sample_p_e_m = torch.gather(p_e_m, 1, sample_idx)
-            sample_tm = torch.gather(tm, 1, sample_idx)
+            sample_local_ent_scores = torch.gather(local_ent_scores, 1, sample_idx2)
+            sample_p_e_m = torch.gather(p_e_m, 1, sample_idx2)
+            sample_tm = torch.gather(tm, 1, sample_idx2)
 
             entity_emb = nega_entity_emb[:n_ments]
             # entity_emb: n_ment * emb_dims
@@ -271,6 +277,7 @@ class MulRelRanker(LocalCtxAttRanker):
 
             n_input = n_ments
             inputs = torch.cat([sample_local_ent_scores, sample_p_e_m, sample_tm, graph_scores, sample_gcnscore], dim=1)
+            scores = self.score_combine(inputs)
 
         # inputs = torch.cat([local_ent_scores.view(n_ments * n_cands, -1),
         #                     torch.log(p_e_m + 1e-20).view(n_ments * n_cands, -1)], dim=1)
@@ -285,7 +292,9 @@ class MulRelRanker(LocalCtxAttRanker):
         # print("self.score_combine",self.score_combine)
         
         # assert False
-
+        
+        if torch.isnan(scores).any():
+            ipdb.set_trace()
         return scores, self.actions
 
     def unique(self, numpy_array):

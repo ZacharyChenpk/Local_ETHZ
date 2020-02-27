@@ -54,7 +54,7 @@ parser.add_argument("--dropout_GCN", type=float,
                     default=0.2)
 parser.add_argument('--gamma', type=float, default=0.9, metavar='G',
                     help='discount factor (default: 0.99)')
-parser.add_argument('--n_sample', type=int, default=10, metavar='G',
+parser.add_argument('--n_sample', type=int, default=5, metavar='G',
                     help='how many nega-sample will be picked for every mention')
 # parser.add_argument("--order_learning", type=str2bool, nargs='?', default='n', const=True,
 #                     help="Activate order learning mode.")
@@ -90,7 +90,7 @@ parser.add_argument("--ctx_window", type=int,
 # only choose n contextual words for local-similarity calculating
 parser.add_argument("--tok_top_n", type=int,
                     help="number of top contextual words for the local model",
-                    default=50)
+                    default=40)
 # # only choose n mentions for order learning for 'topic' sort
 # parser.add_argument("--tok_top_n4ment", type=int,
 #                     help="number of top previous disambiguated mentions for the whole model",
@@ -112,10 +112,16 @@ parser.add_argument("--tok_top_n", type=int,
 parser.add_argument("--hid_dims", type=int,
                     help="number of hidden neurons",
                     default=100)
+parser.add_argument("--edge_window", type=int,
+                    help="if distance between two words is smaller than this value, they will be connected in graph",
+                    default=40)
+parser.add_argument("--batch_maxsize", type=int,
+                    help="max num of mentions in one batch",
+                    default=80)
 
 # args for training
 parser.add_argument("--n_epochs", type=int,
-                    help="max number of epochs",
+                    help="max number of training epochs",
                     default=500)
 parser.add_argument("--dev_f1_change_lr", type=float,
                     help="dev f1 to change learning rate",
@@ -138,6 +144,14 @@ parser.add_argument("--margin", type=float,
 
 parser.add_argument('--seq_len', type=int, default=0,
                     help='sequence length during training')
+parser.add_argument('--search_ment_size', type=int, default=20,
+                    help='change entities of how many mention when predict-searching')
+parser.add_argument('--search_entity_size', type=int, default=8,
+                    help='sample how many cands for every mention when predict-searching')
+parser.add_argument('--predict_epoches', type=int, default=30,
+                    help='max predict-searching steps')
+parser.add_argument('--death_epoches', type=int, default=7,
+                    help='stop predict-searching after how many epoches without improvement')
 
 # parser.add_argument('--dca_method', type=int, default=0,
 #                     help='dca select method, 0: attention topk, 1: attention all, 2: average')
@@ -180,7 +194,7 @@ F1_CSV_Path = args.output_path + args.method + "_" + timestr + "_" + "f1.csv"
 
 if __name__ == "__main__":
     print('load conll at', datadir)
-    conll = D.CoNLLDataset(datadir, conll_path, person_path, args.order, args.method)
+    conll = D.CoNLLDataset(datadir, conll_path, person_path, args.order, args.method, edge_window=args.edge_window, batch_maxsize=args.batch_maxsize)
 
     print('create model')
     word_voca, word_embeddings = utils.load_voca_embs(voca_emb_dir + 'dict.word',
@@ -215,7 +229,14 @@ if __name__ == "__main__":
               'seq_len': args.seq_len,
               # 'isDynamic' : args.isDynamic,
               'one_entity_once': args.one_entity_once,
-              'n_sample': arg.n_sample,
+              'n_sample': args.n_sample,
+              'search_ment_size': args.search_ment_size,
+              'search_entity_size': args.search_entity_size,
+              'predict_epoches': args.predict_epoches,
+              'death_epoches': args.death_epoches,
+              'lr': args.learning_rate, 
+              'n_epochs': args.n_epochs, 
+              'use_early_stop' : args.use_early_stop,
               'args': args}
 
     # pprint(config)
@@ -238,7 +259,7 @@ if __name__ == "__main__":
 
     if args.mode == 'train':
         print('training...')
-        config = {'lr': args.learning_rate, 'n_epochs': args.n_epochs, 'use_early_stop' : args.use_early_stop}
+        # config = {}
         # pprint(config)
         ranker.train((conll.train, conll.train_mlist, conll.train_madj), dev_datasets, config)
 

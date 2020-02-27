@@ -1,5 +1,6 @@
 from Local_ETHZ.vocabulary import Vocabulary
 import numpy as np
+import torch
 
 stopword_input = "../data/stopwords-multi.txt"
 
@@ -91,6 +92,29 @@ def tfail(s):
 def tokblue(s):
     return bcolors.OKBLUE + s + bcolors.ENDC
 
+def data_m_graph_build(data, edge_window=30):
+    ment_adjs = []
+    for doc_name, content in enumerate(data):
+        dist_list = [m['prev_dist'] for m in content]
+        # print(doc_name, ":", dist_list)
+        n = len(content)
+        ment_adj = torch.zeros(n, n).cuda()
+        for i, d in enumerate(dist_list):
+            total_dist = 0
+            if i == 0:
+                continue
+            for j in range(i, 0, -1):
+                if dist_list[j] < 0:
+                    break
+                total_dist += dist_list[j]
+                if total_dist <= edge_window:
+                    ment_adj[i][j-1] = 1
+                    ment_adj[j-1][i] = 1
+                else:
+                    break
+        ment_adjs.append(ment_adj)
+    return ment_adjs
+
 ################ precessing size-different graph batch #############
 
 def e_graph_batch_padding(e_cand_to_idxs, e_idx_to_cands, e_adjs, n_ment, n_sample, pad_entity_id = 0):
@@ -112,14 +136,14 @@ def e_graph_batch_padding(e_cand_to_idxs, e_idx_to_cands, e_adjs, n_ment, n_samp
     node_nums = [[len(l) for l in idx_to_cand] for idx_to_cand in e_idx_to_cands]
     max_node_nums = max([max(l) for l in node_nums])
     new_node_cands = [[l + [pad_entity_id] * (max_node_nums - len(l)) for l in idx_to_cand] for idx_to_cand in e_idx_to_cands]
-    new_node_cands = torch.LongTensor(new_node_cands)
+    new_node_cands = torch.LongTensor(new_node_cands).cuda()
     # new_node_cands: n_ment * (n_sample+1) * max_node_nums
     assert new_node_cands.size(0) == n_ment and new_node_cands.size(1) == n_sample+1
-    new_adjs = torch.LongTensor(torch.zeros(n_ment, n_sample+1, max_node_nums, max_node_nums))
-    new_node_mask = torch.zeros(n_ment, n_sample+1, max_node_nums)
+    new_adjs = torch.zeros(n_ment, n_sample+1, max_node_nums, max_node_nums).long().cuda()
+    new_node_mask = torch.zeros(n_ment, n_sample+1, max_node_nums).cuda()
     for i in range(n_ment):
         for j in range(n_sample+1):
-            new_adjs[i][j][0:node_nums[i][j],0:node_nums[i][j]] = e_adjs[i][j]
+            new_adjs[i][j][0:node_nums[i][j],0:node_nums[i][j]] = torch.LongTensor(e_adjs[i][j])
             new_node_mask[i][j][0:node_nums[i][j]] = 1.
     return new_adjs, new_node_cands, new_node_mask
     # new_adjs: n_ment * (n_sample+1) * n_node * n_node

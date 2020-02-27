@@ -5,6 +5,7 @@ from scipy import sparse as sp
 import torch.nn as nn
 import torch.nn.functional as F
 import math
+import ipdb
 '''
 class singleGCNLayer(nn.Module):
 
@@ -39,16 +40,21 @@ class singleGCNLayer(nn.Module):
 
     def forward(self, embeddings, adj):
         n = embeddings.size()[0]
-        ret = torch.mm(adj, embeddings).matmul(self.W)
+        # print(type(adj), type(embeddings), type(self.W))
+        ret = torch.mm(adj.float(), embeddings).matmul(self.W)
         if self.nolinear == "ReLU":
             ret = F.relu(ret)
         return ret
 
     def batch_forward(self, embeddings, adj):
         bsz = embeddings.size(0)
-        ret = torch.bmm(adj, embeddings).bmm(self.W.unsqueeze(0).expand(bsz, embsize, outsize))
+        ret = torch.bmm(adj.float(), embeddings).bmm(self.W.unsqueeze(0).repeat(bsz, 1, 1))
+        if torch.isnan(ret).any():
+            ipdb.set_trace()
         if self.nolinear == "ReLU":
             ret = F.relu(ret)
+        if torch.isnan(ret).any():
+            ipdb.set_trace()
         return ret
 
 class GCN(nn.Module):
@@ -70,7 +76,13 @@ class GCN(nn.Module):
         bsz = embeddings.size(0)
         assert bsz == adj.size(0)
         embeddings = self.layer1.batch_forward(embeddings, adj)
+        if torch.isnan(embeddings).any():
+            ipdb.set_trace()
         embeddings = F.dropout(embeddings, self.dropout, training=self.training) 
+#         if torch.isnan(embeddings).any():
+#             ipdb.set_trace()
         embeddings = self.layer2.batch_forward(embeddings, adj)
+#         if torch.isnan(embeddings).any():
+#             ipdb.set_trace()
         return embeddings
 

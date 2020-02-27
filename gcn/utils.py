@@ -103,10 +103,12 @@ def normalize(adj):
     n = adj.size(0)
     adj = adj + torch.eye(n)
     rowsum = torch.sum(adj, dim=1)
+    rowsum = rowsum + 1e-8
     dsqrt = rowsum.rsqrt()
-    dsqrt[torch.isinf(dsqrt)] = 0.
-    dsqrt[torch.isnan(dsqrt)] = 0.
-    dsqrt = torch.diags(dsqrt)
+    infmsk = torch.ones_like(dsqrt, requires_grad=False).cuda()
+    infmsk[torch.isinf(dsqrt)] = 0.
+    infmsk[torch.isnan(dsqrt)] = 0.
+    dsqrt = torch.diag(dsqrt.mul(infmsk))
     return dsqrt.mm(adj).mm(dsqrt)
 
 def batch_normalize(adj):
@@ -114,10 +116,12 @@ def batch_normalize(adj):
     n = adj.size(1)
     adj = adj + torch.eye(n).repeat(bsz,1,1)
     rowsum = torch.sum(adj, dim=2)
+    rowsum = rowsum + 1e-8
     dsqrt = rowsum.rsqrt()
-    dsqrt[torch.isinf(dsqrt)] = 0.
-    dsqrt[torch.isnan(dsqrt)] = 0.
-    dsqrt = dsqrt.repeat(1,1,n).mul(torch.eye(n).repeat(bsz,1,1))
+    infmsk = torch.ones_like(dsqrt, requires_grad=False).cuda()
+    infmsk[torch.isinf(dsqrt)] = 0.
+    infmsk[torch.isnan(dsqrt)] = 0.
+    dsqrt = dsqrt.mul(infmsk).repeat(1,1,n).mul(torch.eye(n).repeat(bsz,1,1))
     return dsqrt.bmm(adj).bmm(dsqrt)
 
 # def feature_norm(f):
@@ -130,21 +134,25 @@ def batch_normalize(adj):
 
 def feature_norm(f):
     rowsum = torch.sum(f, dim=1)
+    rowsum = rowsum + 1e-8
     r_inv = torch.reciprocal(rowsum)
-    r_inv[torch.isinf(r_inv)] = 0.
-    r_inv[torch.isnan(r_inv)] = 0.
-    r_mat_inv = torch.diags(r_inv)
+    infmsk = torch.ones_like(r_inv, requires_grad=False).cuda()
+    infmsk[torch.isinf(r_inv)] = 0.
+    infmsk[torch.isnan(r_inv)] = 0.
+    r_mat_inv = torch.diag(r_inv.mul(infmsk)).cuda()
     f = r_mat_inv.mm(f)
     return f
 
 def batch_feature_norm(f):
-    bsz = adj.size(0)
-    n = adj.size(1)
+    bsz = f.size(0)
+    n = f.size(1)
     rowsum = torch.sum(f, dim=2)
+    rowsum = rowsum + 1e-8
     r_inv = torch.reciprocal(rowsum)
-    r_inv[torch.isinf(r_inv)] = 0.
-    r_inv[torch.isnan(r_inv)] = 0.
-    r_mat_inv = r_inv.repeat(1,1,n).mul(torch.eye(n).repeat(bsz,1,1))
+    infmsk = torch.ones_like(r_inv, requires_grad=False).cuda()
+    infmsk[torch.isinf(r_inv)] = 0.
+    infmsk[torch.isnan(r_inv)] = 0.
+    r_mat_inv = r_inv.mul(infmsk).unsqueeze(2).repeat(1,1,n).mul(torch.eye(n).cuda().unsqueeze(0).repeat(bsz,1,1))
     f = r_mat_inv.bmm(f)
     return f
 

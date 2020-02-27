@@ -5,6 +5,8 @@ from pprint import pprint
 import pickle as pkl
 import numpy as np
 import json
+import math
+
 doc2type = pkl.load(open('../data/doc2type.pkl', 'rb'))
 entity2type = pkl.load(open('../data/entity2type.pkl', 'rb'))
 mtype2id = {'PER':0, 'ORG':1, 'GPE':2, 'UNK':3}
@@ -237,6 +239,23 @@ def reorder_dataset(data, order):
 
             data[doc_name][0]['conll_doc'] = conll_doc
 
+            
+def split_batchs(data, batch_maxsize):
+    new_data = {}
+    for doc_name, content in data.items():
+        n_ments = len(content)
+        if n_ments <= batch_maxsize:
+            new_data[doc_name] = content
+        else:
+            conll_doc = content[0]['conll_doc']
+            n_batch = math.ceil(n_ments/batch_maxsize)
+            real_batch_size = math.ceil(n_ments/n_batch)
+            for i in range(n_batch):
+                new_content = content[i*real_batch_size:min(n_ments, (i+1)*real_batch_size)]
+                new_content[0]['conll_doc'] = conll_doc
+                new_doc_name = doc_name + 'batch' + str(i)
+                new_data[new_doc_name] = new_content
+    return new_data
 
 def curriculum_reorder(data):
     sorted_by_value = sorted(data.items(), key=lambda kv: len(kv[1]))
@@ -270,9 +289,9 @@ def doc_m_graph_build(data, edge_window=30):
     ment_lists = {}
     ment_adjs = {}
     for doc_name, content in data.items():
-        ment_list = [m['mention'] for m in content]
-        dist_list = [m['prev_dist'] for m in content]
-        print(doc_name, ":", dist_list)
+        ment_list = [m['mention'] for m in content if len(m['candidates'])>0]
+        dist_list = [m['prev_dist'] for m in content if len(m['candidates'])>0]
+        # print(doc_name, ":", dist_list)
         n = len(ment_list)
         ment_adj = np.zeros((n, n))
         for i, d in enumerate(dist_list):
@@ -297,7 +316,7 @@ class CoNLLDataset:
     reading dataset from CoNLL dataset, extracted by https://github.com/dalab/deep-ed/
     """
 
-    def __init__(self, path, conll_path, person_path, order, method, edge_window=30):
+    def __init__(self, path, conll_path, person_path, order, method, edge_window=30, batch_maxsize=80):
         print('load csv')
         self.train = read_csv_file(path + '/aida_train.csv')
         self.testA = read_csv_file(path + '/aida_testA.csv')
@@ -339,6 +358,15 @@ class CoNLLDataset:
         reorder_dataset(self.aquaint, order)
         reorder_dataset(self.clueweb, order)
         reorder_dataset(self.wikipedia, order)
+        
+        self.train = split_batchs(self.train, batch_maxsize)
+        self.testA = split_batchs(self.testA, batch_maxsize)
+        self.testB = split_batchs(self.testB, batch_maxsize)
+        self.msnbc = split_batchs(self.msnbc, batch_maxsize)
+        self.ace2004 = split_batchs(self.ace2004, batch_maxsize)
+        self.aquaint = split_batchs(self.aquaint, batch_maxsize)
+        self.clueweb = split_batchs(self.clueweb, batch_maxsize)
+        self.wikipedia = split_batchs(self.wikipedia, batch_maxsize)
 
         self.train_mlist, self.train_madj = doc_m_graph_build(self.train, edge_window=edge_window)
         self.testA_mlist, self.testA_madj = doc_m_graph_build(self.testA, edge_window=edge_window)
